@@ -93,6 +93,21 @@ export interface VitrinaLabels {
   toPlane: string;
 }
 
+/**
+ * What `useVitrina()` returns: the state and transitions the library owns, for
+ * consumers to build their own chrome on — the library renders no buttons.
+ * Grows with the mechanic: view and active-item state join in later steps.
+ */
+export interface VitrinaApi {
+  zoomSteps: readonly number[];
+  zoomIndex: number;
+  /** `zoomSteps[zoomIndex]` — the scale the zoom layer is heading to. */
+  zoom: number;
+  zoomIn(): void;
+  zoomOut(): void;
+  setZoomIndex(index: number): void;
+}
+
 export interface VitrinaProps {
   entities: VitrinaEntity[];
 
@@ -132,4 +147,10 @@ export interface VitrinaProps {
 
   className?: string;
   style?: CSSProperties;
+
+  /**
+   * Optional chrome, rendered inside the root, above the plane — the subtree
+   * where `useVitrina()` resolves. The library itself renders no controls.
+   */
+  children?: ReactNode;
 }

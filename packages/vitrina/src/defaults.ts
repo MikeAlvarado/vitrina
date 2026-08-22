@@ -47,3 +47,14 @@ export const REVEAL_SCALE = 0.6;
 export const REVEAL_GAP_MS: readonly [number, number] = [30, 80];
 /** Reveal triggers on the viewport inset by this fraction, tested against object centres. */
 export const REVEAL_INSET = 0.12;
+
+/*
+ * Motion timing — library tuning, not §7 measurements. The wheel chase is short
+ * on purpose: a UI-scale duration (~320 ms) reads as lag when it has to follow a
+ * high-frequency trackpad gesture.
+ */
+export const WHEEL_CHASE_SECONDS = 0.16;
+export const WHEEL_CHASE_EASE = 'power3.out';
+/** One discrete zoom step, and the pan re-clamp that rides along with it. */
+export const ZOOM_TWEEN_SECONDS = 0.32;
+export const ZOOM_TWEEN_EASE = 'power2.out';

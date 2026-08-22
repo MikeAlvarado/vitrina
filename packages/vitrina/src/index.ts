@@ -11,8 +11,11 @@ export type {
   VitrinaObjectContext,
   VitrinaDetailContext,
   VitrinaLabels,
+  VitrinaApi,
   VitrinaProps,
 } from './types';
 
+export { Vitrina } from './Vitrina';
+export { useVitrina } from './context';
 export { generateInstances } from './layout/generate';
 export { DEFAULT_LAYOUT, resolveLayout } from './defaults';

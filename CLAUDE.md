@@ -174,7 +174,8 @@ packages/vitrina test|typecheck|build`.
 
 - [x] 1. Scaffold + types + `generateInstances` + tests — determinism proven over 100 runs
 - [x] 2. `geometry.ts` + `reveal.ts` + boundary tests — §10 cases enumerated per file
-- [ ] 3. `<Vitrina>` + `<Plane>`: layers, drag, wheel, zoom, bounds (browser check)
+- [ ] 3. `<Vitrina>` + `<Plane>`: layers, drag, wheel, zoom, bounds — code complete,
+     gate green, SSR smoke passed; browser check on `pnpm preview` still pending
 - [ ] 4. Reveal + tab order + teardown test
 - [ ] 5. Grid view + Flip toggle
 - [ ] 6. Detail panel + flight state machine
