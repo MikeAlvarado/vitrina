@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["vite/client"],
+    // Mirror of the Vite alias, for the editor: types come from the source too, never
+    // from a possibly stale dist/index.d.ts.
+    "paths": {
+      "vitrina": ["../../packages/vitrina/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}
