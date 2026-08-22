@@ -1,0 +1,36 @@
+{
+  "name": "vitrina",
+  "version": "0.0.0",
+  "description": "A finite, draggable plane of cut-out objects for React — pan with inertia, discrete zoom, staggered reveal, grid view, detail flight.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": ["*.css"],
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/base.css",
+    "./themes/paper.css": "./dist/paper.css",
+    "./themes/void.css": "./dist/void.css"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsup"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18",
+    "gsap": ">=3.13"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
