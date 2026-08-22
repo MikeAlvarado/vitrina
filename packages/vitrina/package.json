@@ -4,7 +4,9 @@
   "description": "A finite, draggable plane of cut-out objects for React — pan with inertia, discrete zoom, staggered reveal, grid view, detail flight.",
   "license": "MIT",
   "type": "module",
-  "sideEffects": ["*.css"],
+  "sideEffects": [
+    "*.css"
+  ],
   "files": [
     "dist"
   ],
@@ -23,12 +25,14 @@
     "build": "tsup"
   },
   "peerDependencies": {
+    "gsap": ">=3.13",
     "react": ">=18",
-    "react-dom": ">=18",
-    "gsap": ">=3.13"
+    "react-dom": ">=18"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.4",
+    "jsdom": "^30.0.1",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"

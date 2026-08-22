@@ -22,10 +22,11 @@
  * view, and the detail flight are later steps.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { gsap } from 'gsap';
 import type { Draggable } from 'gsap/Draggable';
+import type { Observer } from 'gsap/Observer';
 
 import type {
   VitrinaEntity,
@@ -44,12 +45,7 @@ import {
   ZOOM_TWEEN_SECONDS,
 } from '../defaults';
 import { generateInstances } from '../layout/generate';
-import {
-  loadInteractionPlugins,
-  useGsapContext,
-  useIsomorphicLayoutEffect,
-  type InteractionPlugins,
-} from '../gsap';
+import { loadInteractionPlugins, useGsapContext, useIsomorphicLayoutEffect } from '../gsap';
 import { centerPan, clampPan, panBounds, selectWorld } from './geometry';
 import type { Pan, Size } from './geometry';
 
@@ -133,20 +129,6 @@ export function Plane({
   const geometryRef = useRef<PlaneGeometry | null>(null);
 
   const [geometry, setGeometry] = useState<PlaneGeometry | null>(null);
-  const [plugins, setPlugins] = useState<InteractionPlugins | null>(null);
-
-  // The interaction plugins arrive via dynamic import (SSR + bundle size, see
-  // gsap.ts). Until they land the plane renders static — the same markup the
-  // server produced.
-  useEffect(() => {
-    let alive = true;
-    void loadInteractionPlugins().then((loaded) => {
-      if (alive) setPlugins(loaded);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   /*
    * Measuring lives in its OWN layout effect, before and outside any GSAP
@@ -227,104 +209,136 @@ export function Plane({
   };
 
   /*
-   * Drag + wheel. This context DOES depend on the measured geometry — world
+   * Drag + wheel. This effect DOES depend on the measured geometry — world
    * bounds and centering come from it — and recreates on every real resize, which
    * is cheap: nothing here animates, it only places the plane and rebuilds the
    * Draggable/Observer. `zoom` is deliberately NOT a dep: a zoom click must not
    * destroy the Draggable mid-inertia (bounds are re-applied by the zoom effect
    * below; the closure's `zoom` is still fresh at every re-creation because a
    * dep change always rides a re-render).
+   *
+   * The interaction plugins arrive via dynamic import (SSR + bundle size, see
+   * gsap.ts), so everything below is created AFTER an await. That changes the
+   * cleanup contract: a resize or reduced-motion flip before the plugins land (or
+   * StrictMode's double mount — same shape) runs the cleanup while the import is
+   * still pending — there is no instance to kill yet, and a `gsap.context`
+   * reverted then cannot revert what has not been created. Hence
+   * the `cancelled` flag checked after the await, and the instances held in
+   * closure variables the cleanup kills explicitly. Until the plugins land the
+   * plane renders static — the same markup the server produced.
    */
-  useGsapContext(
-    () => {
-      const viewport = viewportRef.current;
-      const zoomLayer = zoomLayerRef.current;
-      const panLayer = panLayerRef.current;
-      if (!viewport || !zoomLayer || !panLayer || !geometry || !plugins) return;
-      const { Draggable, Observer } = plugins;
+  useIsomorphicLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const zoomLayer = zoomLayerRef.current;
+    const panLayer = panLayerRef.current;
+    if (!viewport || !zoomLayer || !panLayer || !geometry) return;
 
-      const view: Size = { w: geometry.viewW, h: geometry.viewH };
-      const world: Size = { w: geometry.worldW, h: geometry.worldH };
+    let cancelled = false;
+    let ctx: gsap.Context | null = null;
+    let drag: Draggable | null = null;
+    let wheel: Observer | null = null;
 
-      // The LIVE scale, not the prop: recreating this context mid-zoom-tween must
-      // not snap the scale to the target.
-      gsap.set(zoomLayer, { scale: zoomRef.current });
+    void loadInteractionPlugins().then(({ Draggable, Observer }) => {
+      // Cleanup already ran: this mount is gone, create nothing for it.
+      if (cancelled) return;
 
-      // First mount centres the world — with the zoom origin at the viewport
-      // centre that pan is zoom-invariant. Later runs keep the travelled pan,
-      // re-clamped against the (possibly new) world.
-      const bounds = panBounds(world, view, zoom);
-      const start = clampPan(panRef.current ?? centerPan(world, view), bounds);
-      panRef.current = start;
-      gsap.set(panLayer, { x: start.x, y: start.y });
+      ctx = gsap.context(() => {
+        const view: Size = { w: geometry.viewW, h: geometry.viewH };
+        const world: Size = { w: geometry.worldW, h: geometry.worldH };
 
-      /*
-       * `trigger` (the viewport, which never moves) ≠ `target` (the pan layer):
-       * with a single node the layer eventually translates out from under the
-       * pointer and stops receiving pointerdown — a dead zone.
-       */
-      const [drag] = Draggable.create(panLayer, {
-        trigger: viewport,
-        type: 'x,y',
-        inertia: !reduced,
-        zIndexBoost: false,
-        edgeResistance: EDGE_RESISTANCE,
-        // Below this the gesture is a click, not a drag: panning can start on top
-        // of an object without activating it.
-        minimumMovement: DRAG_THRESHOLD_PX,
-        bounds,
-        onDrag: syncPan,
-        onThrowUpdate: syncPan,
-      });
-      draggableRef.current = drag ?? null;
+        // The LIVE scale, not the prop: recreating this effect mid-zoom-tween
+        // must not snap the scale to the target.
+        gsap.set(zoomLayer, { scale: zoomRef.current });
 
-      /*
-       * Wheel feeds a TARGET that quickTo chases — continuous pursuit, never raw
-       * deltas per event. Each axis syncs pan from its OWN onUpdate: a purely
-       * horizontal gesture never ticks the y tween, and if only one axis synced,
-       * the other axis's movement would go unrecorded.
-       */
-      const chase = reduced ? 0 : WHEEL_CHASE_SECONDS;
-      const panToX = gsap.quickTo(panLayer, 'x', {
-        duration: chase,
-        ease: WHEEL_CHASE_EASE,
-        onUpdate: syncPan,
-      });
-      const panToY = gsap.quickTo(panLayer, 'y', {
-        duration: chase,
-        ease: WHEEL_CHASE_EASE,
-        onUpdate: syncPan,
-      });
+        // First mount centres the world — with the zoom origin at the viewport
+        // centre that pan is zoom-invariant. Later runs keep the travelled pan,
+        // re-clamped against the (possibly new) world.
+        const bounds = panBounds(world, view, zoom);
+        const start = clampPan(panRef.current ?? centerPan(world, view), bounds);
+        panRef.current = start;
+        gsap.set(panLayer, { x: start.x, y: start.y });
 
-      const wheel = Observer.create({
-        target: viewport,
-        type: 'wheel',
-        preventDefault: true,
-        wheelSpeed: WHEEL_SPEED,
-        onChange(self) {
-          const pan = panRef.current;
-          if (!pan) return;
-          // Deltas arrive in SCREEN px and pan lives in world units: divide by
-          // the live zoom (at half scale, 100 px of wheel is 200 px of world).
-          const z = zoomRef.current;
-          const target = clampPan(
-            { x: pan.x - self.deltaX / z, y: pan.y - self.deltaY / z },
-            panBounds(world, view, z),
-          );
-          panToX(target.x);
-          panToY(target.y);
-        },
-      });
+        /*
+         * Safety net: one Draggable per node, ever. A survivor here means a
+         * cleanup was skipped — it must not accumulate. (GSAP itself kills the
+         * previous Draggable on a target, but that is its policy, this is ours.)
+         */
+        Draggable.get(panLayer)?.kill();
 
-      return () => {
-        drag?.kill();
-        draggableRef.current = null;
-        wheel.kill();
-      };
-    },
-    viewportRef,
-    [geometry, reduced, plugins],
-  );
+        /*
+         * `trigger` (the viewport, which never moves) ≠ `target` (the pan layer):
+         * with a single node the layer eventually translates out from under the
+         * pointer and stops receiving pointerdown — a dead zone.
+         */
+        const [instance] = Draggable.create(panLayer, {
+          trigger: viewport,
+          type: 'x,y',
+          inertia: !reduced,
+          zIndexBoost: false,
+          edgeResistance: EDGE_RESISTANCE,
+          // Below this the gesture is a click, not a drag: panning can start on
+          // top of an object without activating it.
+          minimumMovement: DRAG_THRESHOLD_PX,
+          bounds,
+          onDrag: syncPan,
+          onThrowUpdate: syncPan,
+        });
+        drag = instance ?? null;
+        draggableRef.current = drag;
+
+        /*
+         * Wheel feeds a TARGET that quickTo chases — continuous pursuit, never raw
+         * deltas per event. Each axis syncs pan from its OWN onUpdate: a purely
+         * horizontal gesture never ticks the y tween, and if only one axis synced,
+         * the other axis's movement would go unrecorded.
+         */
+        const chase = reduced ? 0 : WHEEL_CHASE_SECONDS;
+        const panToX = gsap.quickTo(panLayer, 'x', {
+          duration: chase,
+          ease: WHEEL_CHASE_EASE,
+          onUpdate: syncPan,
+        });
+        const panToY = gsap.quickTo(panLayer, 'y', {
+          duration: chase,
+          ease: WHEEL_CHASE_EASE,
+          onUpdate: syncPan,
+        });
+
+        wheel = Observer.create({
+          target: viewport,
+          type: 'wheel',
+          preventDefault: true,
+          wheelSpeed: WHEEL_SPEED,
+          onChange(self) {
+            const pan = panRef.current;
+            if (!pan) return;
+            // Deltas arrive in SCREEN px and pan lives in world units: divide by
+            // the live zoom (at half scale, 100 px of wheel is 200 px of world).
+            const z = zoomRef.current;
+            const target = clampPan(
+              { x: pan.x - self.deltaX / z, y: pan.y - self.deltaY / z },
+              panBounds(world, view, z),
+            );
+            panToX(target.x);
+            panToY(target.y);
+          },
+        });
+      }, viewport);
+    });
+
+    return () => {
+      cancelled = true;
+      // Explicit kills, not just the context: these were created after the await,
+      // and a context reverted before they existed cannot know about them.
+      drag?.kill();
+      drag = null;
+      draggableRef.current = null;
+      wheel?.kill();
+      wheel = null;
+      ctx?.revert();
+      ctx = null;
+    };
+  }, [geometry, reduced]);
 
   /*
    * Zoom, in its own context: with `zoom` in the drag context's deps every click

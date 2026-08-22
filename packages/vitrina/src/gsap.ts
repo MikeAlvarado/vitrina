@@ -27,9 +27,12 @@ let pluginsPromise: Promise<InteractionPlugins> | null = null;
 
 /**
  * Loads and registers Draggable, InertiaPlugin, and Observer, exactly once no
- * matter how many components call it — the promise is the cache. InertiaPlugin
- * has no direct call sites; registering it is what makes `inertia: true` work.
- * Flip joins this list when the grid toggle and the detail flight need it.
+ * matter how many components call it — the promise is the cache, at module level,
+ * so StrictMode's double mount (or any two planes) shares ONE import. That only
+ * avoids duplicate work: the mount/unmount race is the caller's to handle, with a
+ * cancellation flag checked after the await (see Plane.tsx). InertiaPlugin has no
+ * direct call sites; registering it is what makes `inertia: true` work. Flip joins
+ * this list when the grid toggle and the detail flight need it.
  */
 export function loadInteractionPlugins(): Promise<InteractionPlugins> {
   pluginsPromise ??= Promise.all([

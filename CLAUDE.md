@@ -79,6 +79,20 @@ idle`; exactly one visible copy of the active object at any moment. `Flip` moves
 - `ctx.add()` with the _outer_ context from inside a `matchMedia` branch creates a cycle
   and blows the stack. Use the context the branch receives.
 - `gsap.from`/`fromTo` defer initial state to end of tick — `lazy: false` where it matters.
+- **Anything created after an `await` inside an effect needs a cancellation flag.** The
+  plugins arrive via dynamic `import()`; whenever the cleanup runs while that promise is
+  pending (a resize or reduced-motion flip before the plugins land; StrictMode's double
+  mount is the same shape) it finds nothing to kill, and a `gsap.context` reverted then
+  cannot revert what did not exist yet — every run that was ever started still creates
+  its Draggable/Observer/quickTo tweens when the continuations flush. Pattern:
+  `let cancelled = false` at the top of the effect, `true` in the cleanup,
+  `if (cancelled) return` right after the await; hold the instances in closure variables
+  and kill them explicitly in the cleanup (`drag?.kill()`, `wheel?.kill()`,
+  `ctx?.revert()`); `Draggable.get(node)?.kill()` before creating as the safety net (GSAP
+  already enforces one Draggable per target — the leak that actually survives is the
+  Observer and the tweens). The module-level promise cache only removes duplicate work —
+  it does not fix the race. `tests/lifecycle.test.tsx` pins it: one Draggable, one
+  Observer after a StrictMode mount and after resizes racing the import.
 - Measure in its own layout effect, before and outside the GSAP context; geometry in
   state **and** a ref. The reveal/intro context depends on a boolean `measured`, **never
   on the geometry object** — the ResizeObserver's second measurement would recreate the
@@ -146,7 +160,7 @@ re-emits a revealed id). `staggerDelays` starts at 0 with seeded gaps in [30, 80
 
 - Pure modules: exhaustive, no DOM. Boundary cases explicitly (zero entities, one
   entity, count < entity count, tiny world, zoom extremes, negative pan, zero viewport).
-- **Teardown test** (from step 4 on): after mount+unmount assert nothing survives —
+- **Teardown test** (`tests/lifecycle.test.tsx`, jsdom + StrictMode): after mount+unmount assert nothing survives —
   tweens on `globalTimeline`, ScrollTrigger, Observer, Draggable (ask element by
   element; there is no global list). Two disciplines: (1) assert mounting _created_
   something first; (2) filter `globalTimeline` to tweens whose targets are `Element`s —
