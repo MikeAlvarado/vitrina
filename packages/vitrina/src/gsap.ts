@@ -12,6 +12,7 @@ import { useEffect, useLayoutEffect } from 'react';
 import type { RefObject } from 'react';
 import { gsap } from 'gsap';
 import type { Draggable } from 'gsap/Draggable';
+import type { Flip } from 'gsap/Flip';
 import type { Observer } from 'gsap/Observer';
 
 /**
@@ -21,9 +22,19 @@ import type { Observer } from 'gsap/Observer';
 export interface InteractionPlugins {
   Draggable: typeof Draggable;
   Observer: typeof Observer;
+  Flip: typeof Flip;
 }
 
 let pluginsPromise: Promise<InteractionPlugins> | null = null;
+let plugins: InteractionPlugins | null = null;
+
+/**
+ * The plugins if they have already arrived, else null. For code that runs
+ * synchronously inside a layout effect and cannot wait — the view Flip, which
+ * must read the DOM in the very commit that swaps the views — and degrades to an
+ * instant swap on the rare toggle that beats the import.
+ */
+export const getInteractionPlugins = (): InteractionPlugins | null => plugins;
 
 /**
  * Loads and registers Draggable, InertiaPlugin, and Observer, exactly once no
@@ -31,17 +42,24 @@ let pluginsPromise: Promise<InteractionPlugins> | null = null;
  * so StrictMode's double mount (or any two planes) shares ONE import. That only
  * avoids duplicate work: the mount/unmount race is the caller's to handle, with a
  * cancellation flag checked after the await (see Plane.tsx). InertiaPlugin has no
- * direct call sites; registering it is what makes `inertia: true` work. Flip joins
- * this list when the grid toggle and the detail flight need it.
+ * direct call sites; registering it is what makes `inertia: true` work. Flip moves
+ * objects between the views (and, later, into the detail panel).
  */
 export function loadInteractionPlugins(): Promise<InteractionPlugins> {
   pluginsPromise ??= Promise.all([
     import('gsap/Draggable'),
     import('gsap/InertiaPlugin'),
     import('gsap/Observer'),
-  ]).then(([draggable, inertia, observer]) => {
-    gsap.registerPlugin(draggable.Draggable, inertia.InertiaPlugin, observer.Observer);
-    return { Draggable: draggable.Draggable, Observer: observer.Observer };
+    import('gsap/Flip'),
+  ]).then(([draggable, inertia, observer, flip]) => {
+    gsap.registerPlugin(
+      draggable.Draggable,
+      inertia.InertiaPlugin,
+      observer.Observer,
+      flip.Flip,
+    );
+    plugins = { Draggable: draggable.Draggable, Observer: observer.Observer, Flip: flip.Flip };
+    return plugins;
   });
   return pluginsPromise;
 }

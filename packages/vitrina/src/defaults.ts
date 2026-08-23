@@ -66,3 +66,15 @@ export const ZOOM_TWEEN_EASE = 'power2.out';
 export const REVEAL_POP_SECONDS = 0.45;
 export const INTRO_POP_SECONDS = 0.7;
 export const REVEAL_POP_EASE = 'back.out(1.4)';
+
+/*
+ * Grid view. Cell and gap measured on palmer-dinnerware.com (240 px cells on a
+ * ~320 px step). Themes override them through `--vitrina-grid-cell` and
+ * `--vitrina-grid-gap` on `[data-vitrina-root]` — including under media queries,
+ * which inline styles cannot express.
+ */
+export const GRID_CELL = 240;
+export const GRID_GAP = 80;
+/** The Flip of every object between plane and grid. Library tuning. */
+export const VIEW_FLIP_SECONDS = 0.7;
+export const VIEW_FLIP_EASE = 'power3.inOut';

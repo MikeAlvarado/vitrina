@@ -26,7 +26,7 @@ import { Observer } from 'gsap/Observer';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { mountStrict, renderStrict, resizeSync, settle, stubDom } from './harness';
+import { Probe, currentApi, mountStrict, renderStrict, requirePan, resizeSync, settle, stubDom } from './harness';
 import type { DomStubs } from './harness';
 
 interface LiveAnimations {
@@ -92,7 +92,8 @@ afterEach(() => {
 
 describe('teardown — nothing GSAP survives the plane', () => {
   it('StrictMode mount creates exactly one interaction; unmount leaves nothing live', async () => {
-    const { host, pan, root } = await mountStrict();
+    const { host, root } = await mountStrict();
+    const pan = requirePan(host);
     const nodes = nodesOf(host);
 
     // Mounting created something — and the double mount really happened.
@@ -153,7 +154,8 @@ describe('teardown — nothing GSAP survives the plane', () => {
      * without the flag — every run that was ever started would still create its
      * Draggable/Observer once the microtasks flush.
      */
-    const { host, pan, root } = await mountStrict();
+    const { host, root } = await mountStrict();
+    const pan = requirePan(host);
     const nodes = nodesOf(host);
     resizeSync(stubs, 1000, 700);
     resizeSync(stubs, 900, 600);
@@ -169,5 +171,41 @@ describe('teardown — nothing GSAP survives the plane', () => {
 
     expect(liveAnimationCount()).toEqual(NOTHING_LIVE);
     expect(liveDraggables(nodes)).toBe(0);
+  });
+
+  it('toggling plane ↔ grid repeatedly, then unmounting, leaves nothing live', async () => {
+    const { host, root } = await mountStrict({ children: <Probe /> });
+    const panLayers: Element[] = [];
+    const rememberPlane = () => {
+      const pan = host.querySelector('[data-vitrina-pan]');
+      if (pan) panLayers.push(pan);
+    };
+    rememberPlane();
+
+    // Let the intro land so there are shown objects to hand to Flip.
+    act(() => {
+      gsap.globalTimeline.time(gsap.globalTimeline.time() + 5);
+    });
+    expect(host.querySelectorAll('[data-vitrina-revealed]').length).toBeGreaterThan(0);
+
+    for (let i = 0; i < 5; i++) {
+      act(() => currentApi().toggleView());
+      const inGrid = host.querySelector('[data-vitrina-grid]') !== null;
+      expect(inGrid).toBe(i % 2 === 0);
+      expect(host.querySelector('[data-vitrina-viewport]') !== null).toBe(!inGrid);
+      // Every toggle flies something: the hand-off is a Flip with real tweens.
+      expect(liveAnimationCount().tweens).toBeGreaterThan(0);
+      if (!inGrid) rememberPlane();
+      await settle();
+      // Only the CURRENT plane owns a Draggable; every previous one is dead.
+      expect(liveDraggables(panLayers)).toBe(inGrid ? 0 : 1);
+    }
+    expect(panLayers.length).toBe(3);
+
+    await act(async () => root.unmount());
+
+    expect(liveAnimationCount()).toEqual(NOTHING_LIVE);
+    expect(liveDraggables(panLayers)).toBe(0);
+    expect(enabledDraggables()).toHaveLength(0);
   });
 });

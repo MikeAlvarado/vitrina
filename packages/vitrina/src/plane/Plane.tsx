@@ -21,7 +21,11 @@
  * Visibility is ONE analytic pass per frame of movement (§6.4), `runPass` below,
  * fed by pan and zoom and answering two questions at once: which objects may be
  * in the tab order, and which unrevealed objects just entered the inset frame
- * and get popped. Grid view and the detail flight are later steps.
+ * and get popped.
+ *
+ * Pan, the revealed sets and the intro flag live in the session the root owns:
+ * the view toggle unmounts this component, and coming back from the grid must
+ * land where the visitor was. The detail flight is a later step.
  */
 
 import { useMemo, useReducer, useRef, useState } from 'react';
@@ -47,6 +51,8 @@ import {
   REVEAL_POP_EASE,
   REVEAL_POP_SECONDS,
   REVEAL_SCALE,
+  VIEW_FLIP_EASE,
+  VIEW_FLIP_SECONDS,
   WHEEL_CHASE_EASE,
   WHEEL_CHASE_SECONDS,
   WHEEL_SPEED,
@@ -55,9 +61,15 @@ import {
 } from '../defaults';
 import { generateInstances } from '../layout/generate';
 import { createRng } from '../layout/rng';
-import { loadInteractionPlugins, useGsapContext, useIsomorphicLayoutEffect } from '../gsap';
+import {
+  getInteractionPlugins,
+  loadInteractionPlugins,
+  useGsapContext,
+  useIsomorphicLayoutEffect,
+} from '../gsap';
+import type { Session } from '../session';
 import { centerPan, clampPan, panBounds, selectWorld } from './geometry';
-import type { Pan, Size } from './geometry';
+import type { Size } from './geometry';
 import { framePass, staggerDelays } from './reveal';
 
 /** Viewport and world measurements, cached — never re-measured per frame. */
@@ -78,8 +90,10 @@ export interface PlaneProps {
   labels: VitrinaLabels;
   /** Target scale (a zoom step). The live, animated scale is tracked internally. */
   zoom: number;
-  /** Effective reduced motion: no intro, no pops, no inertia, no wheel smoothing, no zoom tween. */
+  /** Effective reduced motion: no intro, no pops, no inertia, no wheel smoothing, no zoom tween, no Flip. */
   reduced: boolean;
+  /** Owned by the root; outlives this component across view toggles. */
+  session: Session;
 }
 
 /*
@@ -130,13 +144,12 @@ export function Plane({
   labels,
   zoom,
   reduced,
+  session,
 }: PlaneProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const zoomLayerRef = useRef<HTMLDivElement>(null);
   const panLayerRef = useRef<HTMLDivElement>(null);
 
-  /** Live pan in world units. GSAP's inline transform is the source of truth; this mirrors it. */
-  const panRef = useRef<Pan | null>(null);
   /** Live scale — tweens move it; the `zoom` prop is only the target. */
   const zoomRef = useRef(zoom);
   /** Last target already applied — how the zoom effect knows the prop actually changed. */
@@ -148,29 +161,19 @@ export function Plane({
    * closing over the state.
    */
   const geometryRef = useRef<PlaneGeometry | null>(null);
+  /** The placement effect has run with real geometry: the layers are where the session says. */
+  const placedOnceRef = useRef(false);
 
   /*
-   * Reveal and tab-order state lives in refs, not React state: it changes on
-   * movement frames, and the DOM is written directly — only on change, never
-   * every frame. React never renders any of it, so a re-render can never clobber
-   * it either.
+   * Reveal and tab-order state lives in the session and in refs, not React
+   * state: it changes on movement frames, and the DOM is written directly —
+   * only on change, never every frame. React never renders any of it, so a
+   * re-render can never clobber it either.
    */
   /** Instance id → its button. Filled by stable callback refs; the pass never queries the DOM. */
   const nodesRef = useRef(new Map<string, HTMLButtonElement>());
   /** One stable ref callback per instance id, so React only calls them on attach/detach. */
   const nodeRefsRef = useRef(new Map<string, (el: HTMLButtonElement | null) => void>());
-  /**
-   * Ids the pass has claimed — queued for a pop, or shown. Handed to `framePass`
-   * as its revealed set so an id is never re-emitted while it waits its turn in a
-   * stagger. A queued pop that its context reverts before it starts is UNclaimed
-   * again (see the reveal context's cleanup) and re-enters on the next pass.
-   */
-  const claimedRef = useRef(new Set<string>());
-  /**
-   * Ids whose pop has started (or landed instantly). THIS is the permanent,
-   * revealed set — it survives the grid toggle and any context recreation.
-   */
-  const shownRef = useRef(new Set<string>());
   /** Ids in frame per the last pass, revealed or not yet shown — consulted when a pop starts. */
   const inFrameRef = useRef(new Set<string>());
   /** Ids currently carrying tabindex=0 — the attribute is written only when this set changes. */
@@ -179,14 +182,45 @@ export function Plane({
   const revealCtxRef = useRef<gsap.Context | null>(null);
   /** Seeded gap generator for pop staggers — the only randomness on this side of the library. */
   const revealRngRef = useRef<(() => number) | null>(null);
-  /** True until the first batch pops: that batch is the intro, from INTRO_SCALE. */
-  const introPendingRef = useRef(true);
   const placedRef = useRef<readonly VitrinaInstance[]>([]);
   const reducedRef = useRef(reduced);
   /** Re-renders once per finished reveal batch so `renderObject` sees `isRevealed` flip. */
   const [, bumpRevealed] = useReducer((n: number) => n + 1, 0);
 
   const [geometry, setGeometry] = useState<PlaneGeometry | null>(null);
+
+  /*
+   * View hand-off, capture side. Declared FIRST so its cleanup runs before any
+   * other effect's: the rects must be read while the pan and zoom transforms
+   * are still applied (the placement effect's revert strips them) and while a
+   * Flip still in flight is where it is. Only the objects that have shown can
+   * fly — the rest were invisible. Nothing is captured unless this mount
+   * actually placed the plane: StrictMode's simulated unmount happens before
+   * that, and must not overwrite the grid's own hand-off with garbage.
+   */
+  useIsomorphicLayoutEffect(() => {
+    return () => {
+      const viewport = viewportRef.current;
+      const plugins = getInteractionPlugins();
+      if (!viewport || !plugins || !placedOnceRef.current || reducedRef.current) return;
+      const { shown } = session.read();
+      const targets: Element[] = [];
+      for (const [id, el] of nodesRef.current) if (shown.has(id)) targets.push(el);
+      if (targets.length === 0) return;
+      const state = plugins.Flip.getState(targets);
+      const rects = new Map<string, DOMRect>();
+      for (const es of state.elementStates) {
+        const id = es.element.getAttribute('data-vitrina-instance');
+        if (id) rects.set(id, es.bounds);
+      }
+      session.storeFlip({
+        from: 'plane',
+        state,
+        rects,
+        viewport: viewport.getBoundingClientRect(),
+      });
+    };
+  }, []);
 
   /*
    * Measuring lives in its OWN layout effect, before and outside any GSAP
@@ -273,7 +307,7 @@ export function Plane({
           // An object that appears after the reveal context exists (consumer changed
           // the instances) is born hidden like every other unrevealed one.
           const ctx = revealCtxRef.current;
-          if (ctx && !shownRef.current.has(id)) ctx.add(() => hide([el], REVEAL_SCALE));
+          if (ctx && !session.read().shown.has(id)) ctx.add(() => hide([el], REVEAL_SCALE));
         } else {
           nodesRef.current.delete(id);
         }
@@ -285,7 +319,7 @@ export function Plane({
 
   /** A pop has started (or landed): the object is visible, clickable, and — if in frame — tabbable. */
   const markShown = (id: string, el: HTMLButtonElement) => {
-    shownRef.current.add(id);
+    session.markShown(id);
     el.style.pointerEvents = 'auto';
     el.setAttribute('data-vitrina-revealed', '');
     if (inFrameRef.current.has(id) && !tabbableRef.current.has(id)) {
@@ -307,9 +341,9 @@ export function Plane({
     // Before the reveal context exists nothing is hidden yet; leave these
     // unrevealed and let the context's own first pass claim them.
     if (!ctx || !rng) return;
-    for (const id of ids) claimedRef.current.add(id);
-    const intro = introPendingRef.current;
-    introPendingRef.current = false;
+    session.claim(ids);
+    const intro = !session.read().introDone;
+    session.markIntroDone();
 
     const batch: Array<[string, HTMLButtonElement]> = [];
     for (const id of ids) {
@@ -358,7 +392,7 @@ export function Plane({
    */
   const runPass = () => {
     const geo = geometryRef.current;
-    const pan = panRef.current;
+    const { pan, claimed, shown } = session.read();
     if (!geo || !pan) return;
     const nodes = nodesRef.current;
     const { focusable, entering } = framePass(
@@ -367,7 +401,7 @@ export function Plane({
       pan,
       zoomRef.current,
       REVEAL_INSET,
-      claimedRef.current,
+      claimed,
     );
 
     // Tab order: revealed ∩ in frame, minus those whose pop has not started yet
@@ -379,7 +413,7 @@ export function Plane({
     for (const id of entering) inFrame.add(id);
     inFrameRef.current = inFrame;
     const next = new Set<string>();
-    for (const id of focusable) if (shownRef.current.has(id)) next.add(id);
+    for (const id of focusable) if (shown.has(id)) next.add(id);
     const prev = tabbableRef.current;
     for (const id of prev) {
       if (!next.has(id)) {
@@ -398,15 +432,15 @@ export function Plane({
     if (entering.length > 0) reveal(entering);
   };
 
-  // Every mover mirrors the pan layer's transform into panRef from its own
+  // Every mover mirrors the pan layer's transform into the session from its own
   // onUpdate, then runs the pass on that fresh pan.
   const syncPan = () => {
     const panLayer = panLayerRef.current;
     if (!panLayer) return;
-    panRef.current = {
+    session.savePan({
       x: gsap.getProperty(panLayer, 'x') as number,
       y: gsap.getProperty(panLayer, 'y') as number,
-    };
+    });
     runPass();
   };
 
@@ -418,16 +452,17 @@ export function Plane({
    * click must not destroy the Draggable mid-inertia (bounds are re-applied by
    * the zoom effect below).
    *
-   * Placement is synchronous and plugin-free, so the plane is centred — and the
-   * first pass has a pan to work with — before the first paint, without waiting
-   * for the import. The interaction plugins arrive via dynamic import (SSR +
-   * bundle size, see gsap.ts), so Draggable and Observer are created AFTER an
-   * await. That changes the cleanup contract: a resize or reduced-motion flip
-   * before the plugins land (or StrictMode's double mount — same shape) runs the
-   * cleanup while the import is still pending — there is no instance to kill
-   * yet, and a context reverted then cannot revert what has not been created.
-   * Hence the `cancelled` flag checked after the await, and the instances held
-   * in closure variables the cleanup kills explicitly.
+   * Placement is synchronous and plugin-free, so the plane is centred — or back
+   * where the session left it — and the first pass has a pan to work with,
+   * before the first paint, without waiting for the import. The interaction
+   * plugins arrive via dynamic import (SSR + bundle size, see gsap.ts), so
+   * Draggable and Observer are created AFTER an await. That changes the cleanup
+   * contract: a resize or reduced-motion flip before the plugins land (or
+   * StrictMode's double mount — same shape) runs the cleanup while the import
+   * is still pending — there is no instance to kill yet, and a context reverted
+   * then cannot revert what has not been created. Hence the `cancelled` flag
+   * checked after the await, and the instances held in closure variables the
+   * cleanup kills explicitly.
    */
   useIsomorphicLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -447,16 +482,17 @@ export function Plane({
       // not snap the scale to the target.
       gsap.set(zoomLayer, { scale: zoomRef.current });
 
-      // First mount centres the world — with the zoom origin at the viewport
-      // centre that pan is zoom-invariant. Later runs keep the travelled pan,
-      // re-clamped against the (possibly new) world.
+      // First placement centres the world — with the zoom origin at the viewport
+      // centre that pan is zoom-invariant. Later runs (resize, return from the
+      // grid) keep the travelled pan, re-clamped against the (possibly new) world.
       const start = clampPan(
-        panRef.current ?? centerPan(world, view),
+        session.read().pan ?? centerPan(world, view),
         panBounds(world, view, zoom),
       );
-      panRef.current = start;
+      session.savePan(start);
       gsap.set(panLayer, { x: start.x, y: start.y });
     }, viewport);
+    placedOnceRef.current = true;
     // A new viewport size means new objects in frame.
     runPass();
 
@@ -521,7 +557,7 @@ export function Plane({
           preventDefault: true,
           wheelSpeed: WHEEL_SPEED,
           onChange(self) {
-            const pan = panRef.current;
+            const { pan } = session.read();
             if (!pan) return;
             // Deltas arrive in SCREEN px and pan lives in world units: divide by
             // the live zoom (at half scale, 100 px of wheel is 200 px of world).
@@ -576,7 +612,7 @@ export function Plane({
     let passAfter = false;
     const ctx = gsap.context(() => {
       gsap.set(zoomLayer, { scale: zoomRef.current });
-      const pan = panRef.current;
+      const { pan } = session.read();
       if (pan) gsap.set(panLayer, { x: pan.x, y: pan.y });
 
       if (zoom === zoomAppliedRef.current) return;
@@ -601,7 +637,7 @@ export function Plane({
         const settled = clampPan(pan, bounds);
         if (settled.x !== pan.x || settled.y !== pan.y) {
           if (reduced) {
-            panRef.current = settled;
+            session.savePan(settled);
             gsap.set(panLayer, { x: settled.x, y: settled.y });
           } else {
             gsap.to(panLayer, {
@@ -647,7 +683,8 @@ export function Plane({
    *
    * Runs after the placement effect above (declaration order), so the first pass
    * already has a pan: the intro pops right here, before the first paint of the
-   * measured plane, without waiting for the plugins.
+   * measured plane, without waiting for the plugins. Back from the grid, the
+   * session already knows what showed: no second intro.
    */
   const measured = geometry !== null;
   useGsapContext(
@@ -660,12 +697,19 @@ export function Plane({
       // Baseline: everything not yet shown is hidden, everything shown is shown
       // (a previous run's revert restored the plain markup). Tab order starts
       // empty and is rebuilt by the pass.
+      const { shown, introDone } = session.read();
       const hidden: Element[] = [];
       const visible: Element[] = [];
       for (const [id, el] of nodesRef.current) {
-        (shownRef.current.has(id) ? visible : hidden).push(el);
+        if (shown.has(id)) {
+          visible.push(el);
+          // Fresh nodes (back from the grid) carry none of the pass's marks yet.
+          el.setAttribute('data-vitrina-revealed', '');
+        } else {
+          hidden.push(el);
+        }
       }
-      if (hidden.length > 0) hide(hidden, introPendingRef.current ? INTRO_SCALE : REVEAL_SCALE);
+      if (hidden.length > 0) hide(hidden, introDone ? REVEAL_SCALE : INTRO_SCALE);
       if (visible.length > 0) show(visible);
       for (const id of tabbableRef.current) {
         const el = nodesRef.current.get(id);
@@ -681,11 +725,39 @@ export function Plane({
         // are back at their plain markup and have never been seen: unclaim them so
         // the next context's first pass pops them again (as the intro, if nothing
         // ever showed) instead of showing them un-animated.
-        for (const id of claimedRef.current) {
-          if (!shownRef.current.has(id)) claimedRef.current.delete(id);
-        }
-        if (shownRef.current.size === 0) introPendingRef.current = true;
+        session.unclaimPending();
+        if (session.read().shown.size === 0) session.resetIntro();
       };
+    },
+    viewportRef,
+    [measured],
+  );
+
+  /*
+   * View hand-off, arrival side: the grid's cards Flip into the objects they
+   * came from. Needs the plane placed and its baseline applied (both gate on
+   * `measured`, both declared above), so it runs when `measured` turns true —
+   * the first render has no geometry and must leave the record untouched.
+   * Targets are the shown objects only; cards whose object is not shown simply
+   * vanish. Under reduced motion the swap is instant and the record is dropped.
+   */
+  useGsapContext(
+    () => {
+      if (!measured) return;
+      const record = session.takeFlip();
+      const plugins = getInteractionPlugins();
+      if (!record || !plugins || reducedRef.current) return;
+      const { shown } = session.read();
+      const targets: Element[] = [];
+      for (const [id, el] of nodesRef.current) if (shown.has(id)) targets.push(el);
+      if (targets.length === 0) return;
+      plugins.Flip.from(record.state, {
+        targets,
+        scale: true,
+        prune: true,
+        duration: VIEW_FLIP_SECONDS,
+        ease: VIEW_FLIP_EASE,
+      });
     },
     viewportRef,
     [measured],
@@ -694,6 +766,7 @@ export function Plane({
   // Before the first measurement (and on the server) the pan layer takes the
   // regular world's dimensions — the compact decision needs a viewport width.
   const world: Size = geometry ? { w: geometry.worldW, h: geometry.worldH } : layout.world;
+  const { shown } = session.read();
 
   return (
     <div
@@ -731,6 +804,8 @@ export function Plane({
                 data-vitrina-object=""
                 data-vitrina-instance={inst.id}
                 data-vitrina-entity={inst.entityId}
+                // Exact per-instance id for Flip — never a per-entity prefix.
+                data-flip-id={inst.id}
                 aria-label={labels.objectLabel(entity)}
                 // Nothing is tabbable until the pass says so: the server and the
                 // un-measured client agree, and the pass writes tabindex directly —
@@ -747,7 +822,7 @@ export function Plane({
                 {renderObject(entity, {
                   instanceId: inst.id,
                   isActive: false,
-                  isRevealed: shownRef.current.has(inst.id),
+                  isRevealed: shown.has(inst.id),
                   view: 'plane',
                 })}
               </button>

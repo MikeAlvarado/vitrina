@@ -84,6 +84,8 @@ export interface VitrinaDetailContext {
 export interface VitrinaLabels {
   /** aria-label for the plane viewport. e.g. "Explorable plane of objects" */
   viewport: string;
+  /** aria-label for the grid region. Optional: falls back to `viewport`. */
+  grid?: string;
   /** Given an entity, the accessible name of its button. */
   objectLabel: (entity: VitrinaEntity) => string;
   closeDetail: string;
@@ -106,6 +108,16 @@ export interface VitrinaApi {
   zoomIn(): void;
   zoomOut(): void;
   setZoomIndex(index: number): void;
+  /** The current view. Plane objects Flip into grid cards and back. */
+  view: VitrinaView;
+  setView(view: VitrinaView): void;
+  toggleView(): void;
+  /**
+   * True while `reducedMotion: 'grid'` is in effect (the visitor prefers reduced
+   * motion): the view is fixed to the grid, and `setView`, `toggleView`, and the
+   * zoom transitions are no-ops. Chrome should hide the toggle and the zoom.
+   */
+  viewLocked: boolean;
 }
 
 export interface VitrinaProps {

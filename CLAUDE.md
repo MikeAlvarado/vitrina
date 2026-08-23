@@ -70,6 +70,26 @@ idle`; exactly one visible copy of the active object at any moment. `Flip` moves
   `:focus-visible` in Chrome, so object buttons need `outline: none` + a deliberate
   `:focus-visible` ring.
 
+## Grid view (step 5)
+
+- **One card per entity** — the grid is the list of what exists, not of the 114 copies.
+  Each card Flips from the SHOWN instance of its entity closest to the viewport centre
+  at toggle time (`pairCards`, exact `data-flip-id` = instance id, never an entity
+  prefix); entities with nothing shown fade in. Going back, cards fly to that same
+  instance; cards whose instance is not shown just vanish. Objects not paired to a card
+  are removed instantly — they are not in the DOM to fade.
+- The grid container declares BOTH overflow axes (`overflow-y: auto; overflow-x:
+  hidden`) and `scrollbar-gutter: stable`: leaving x unset couples it to y, which makes
+  the container a valid horizontal scroller that any scroll-into-view can hand a real
+  `scrollLeft`. During a flight `overflow-y` is clipped too — a transformed card extends
+  the scrollable area and flickers the scrollbar.
+- Cell/gap are `--vitrina-grid-cell` / `--vitrina-grid-gap` (240 / 80 defaults) so a theme
+  can retune them under media queries; inline styles cannot.
+- `labels.grid` is optional and falls back to `labels.viewport` — adding a required
+  label would have broken every existing consumer's `labels` object.
+- `reducedMotion: 'grid'` locks only when the visitor prefers reduced motion;
+  `viewLocked` on the API tells chrome to hide the toggle and the zoom (all no-ops).
+
 ## GSAP lifecycle gotchas (§6.7)
 
 - `useGsapContext(fn, scopeRef, deps)` wraps `gsap.context`, reverts on cleanup.
@@ -103,6 +123,17 @@ idle`; exactly one visible copy of the active object at any moment. `Flip` moves
   the plain markup. "Revealed" is therefore the set whose pop has STARTED; ids merely
   queued are unclaimed again on cleanup so the next context pops them (StrictMode's
   double mount would otherwise show the whole intro un-animated).
+- **The view hand-off (`src/session.ts`) is captured in a layout-effect cleanup declared
+  FIRST in the component**, so it runs before the placement effect's revert strips the
+  pan/zoom transforms and before a Flip still in flight is killed — React runs unmount
+  cleanups in declaration order, and a deleted subtree's cleanups run while its DOM is
+  still attached. The plane captures only if it actually placed itself
+  (`placedOnceRef`): StrictMode's simulated unmount comes before that and must not
+  overwrite the grid's record. Under StrictMode the first arrival's Flip is reverted, but
+  the capture stored the cards mid-flight (at their plane positions), so the second run
+  flies the same flight — a record is consumed whatever view wrote it.
+- The plane's baseline marks shown nodes (`data-vitrina-revealed`) itself: back from the
+  grid the buttons are NEW nodes, and only StrictMode's node reuse ever hid that.
 - Measure in its own layout effect, before and outside the GSAP context; geometry in
   state **and** a ref. The reveal/intro context depends on a boolean `measured`, **never
   on the geometry object** — the ResizeObserver's second measurement would recreate the
@@ -176,6 +207,10 @@ re-emits a revealed id). `staggerDelays` starts at 0 with seeded gaps in [30, 80
   element; there is no global list). Two disciplines: (1) assert mounting _created_
   something first; (2) filter `globalTimeline` to tweens whose targets are `Element`s —
   ScrollTrigger parks two internal `delayedCall`s (function targets) there forever.
+- **View test** (`tests/view.test.tsx`): grid markup (one card per entity, no text beyond
+  `renderObject`'s, both overflow axes), controlled/uncontrolled toggle, the `'grid'` lock,
+  and the round trip: pan and revealed set identical on return, `isRevealed` true from the
+  first render back, cards paired by exact shown instance id.
 - **Reveal/tab-order DOM test** (`tests/reveal-dom.test.tsx`): the DOM is checked against
   `framePass`'s own prediction at every zoom step — never against hand-picked counts,
   which depend on where 9 objects happen to fall. Motion timing is driven by hand:
@@ -210,7 +245,9 @@ packages/vitrina test|typecheck|build`.
      gate green, SSR smoke passed; browser check on `pnpm preview` still pending
 - [ ] 4. Reveal + tab order + teardown test — code complete, gate green, DOM tests
      against `framePass`; reveal rhythm / intro feel still need the real-browser check
-- [ ] 5. Grid view + Flip toggle
+- [ ] 5. Grid view + Flip toggle — code complete, gate green (`tests/view.test.tsx`,
+     teardown across repeated toggles); the flight itself needs the real-browser check
+     (the playground has no toggle by design — the demo's controls will)
 - [ ] 6. Detail panel + flight state machine
 - [ ] 7. Themes, `base.css`, `<VitrinaControls>`, reduced-motion paths
      (note: `package.json` exports already reference `dist/*.css` — the build must copy
