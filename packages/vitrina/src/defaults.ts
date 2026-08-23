@@ -58,3 +58,11 @@ export const WHEEL_CHASE_EASE = 'power3.out';
 /** One discrete zoom step, and the pan re-clamp that rides along with it. */
 export const ZOOM_TWEEN_SECONDS = 0.32;
 export const ZOOM_TWEEN_EASE = 'power2.out';
+/**
+ * One reveal pop (scale REVEAL_SCALE → 1) and the intro's (INTRO_SCALE → 1, a
+ * touch slower: it is the first thing seen). Library tuning — the gaps between
+ * pops (REVEAL_GAP_MS) are the measured part.
+ */
+export const REVEAL_POP_SECONDS = 0.45;
+export const INTRO_POP_SECONDS = 0.7;
+export const REVEAL_POP_EASE = 'back.out(1.4)';

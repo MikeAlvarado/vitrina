@@ -78,6 +78,11 @@ idle`; exactly one visible copy of the active object at any moment. `Flip` moves
   fails only at hydration. Use the `self` argument.
 - `ctx.add()` with the _outer_ context from inside a `matchMedia` branch creates a cycle
   and blows the stack. Use the context the branch receives.
+- **`otherCtx.add(fn)` called while a different context is under construction nests
+  `otherCtx` INTO it** (`prev.data.push(self)` in GSAP's `Context.add`): the next revert of
+  the outer one takes every tween of the inner one with it — the zoom context reverting
+  every reveal pop, silently. Anything that feeds the reveal context (the visibility pass)
+  runs only outside any `gsap.context` setup: after construction, or from tween callbacks.
 - `gsap.from`/`fromTo` defer initial state to end of tick — `lazy: false` where it matters.
 - **Anything created after an `await` inside an effect needs a cancellation flag.** The
   plugins arrive via dynamic `import()`; whenever the cleanup runs while that promise is
@@ -91,8 +96,13 @@ idle`; exactly one visible copy of the active object at any moment. `Flip` moves
   `ctx?.revert()`); `Draggable.get(node)?.kill()` before creating as the safety net (GSAP
   already enforces one Draggable per target — the leak that actually survives is the
   Observer and the tweens). The module-level promise cache only removes duplicate work —
-  it does not fix the race. `tests/lifecycle.test.tsx` pins it: one Draggable, one
-  Observer after a StrictMode mount and after resizes racing the import.
+  it does not fix the race. `tests/teardown.test.tsx` pins it: one Draggable, one
+  Observer after a StrictMode mount, after resizes racing the import, and nothing at all
+  after an unmount that beats the import.
+- A reverted reveal context kills the pops still waiting in their stagger and restores
+  the plain markup. "Revealed" is therefore the set whose pop has STARTED; ids merely
+  queued are unclaimed again on cleanup so the next context pops them (StrictMode's
+  double mount would otherwise show the whole intro un-animated).
 - Measure in its own layout effect, before and outside the GSAP context; geometry in
   state **and** a ref. The reveal/intro context depends on a boolean `measured`, **never
   on the geometry object** — the ResizeObserver's second measurement would recreate the
@@ -160,11 +170,19 @@ re-emits a revealed id). `staggerDelays` starts at 0 with seeded gaps in [30, 80
 
 - Pure modules: exhaustive, no DOM. Boundary cases explicitly (zero entities, one
   entity, count < entity count, tiny world, zoom extremes, negative pan, zero viewport).
-- **Teardown test** (`tests/lifecycle.test.tsx`, jsdom + StrictMode): after mount+unmount assert nothing survives —
+- **Teardown test** (`tests/teardown.test.tsx`, jsdom + StrictMode, scaffolding in
+  `tests/harness.tsx`): after mount+unmount assert nothing survives —
   tweens on `globalTimeline`, ScrollTrigger, Observer, Draggable (ask element by
   element; there is no global list). Two disciplines: (1) assert mounting _created_
   something first; (2) filter `globalTimeline` to tweens whose targets are `Element`s —
   ScrollTrigger parks two internal `delayedCall`s (function targets) there forever.
+- **Reveal/tab-order DOM test** (`tests/reveal-dom.test.tsx`): the DOM is checked against
+  `framePass`'s own prediction at every zoom step — never against hand-picked counts,
+  which depend on where 9 objects happen to fall. Motion timing is driven by hand:
+  `gsap.globalTimeline.pause()` AFTER mount (a paused ancestor stops `gsap.set` from
+  rendering immediately, so never before), then `globalTimeline.time(t)`. Pops created
+  during a render are not rendered in that pass — that is what makes a queued batch
+  deterministic. `gsap.ticker.sleep()` is useless here: creating a tween wakes it.
 - SSR test: `renderToString` in Node; no throw; objects present in markup.
 - **Only verifiable in a real browser on `pnpm preview`, never in an automated tab**
   (frozen rAF, stale `getBoundingClientRect`): drag/trackpad feel, edge elasticity,
@@ -190,7 +208,8 @@ packages/vitrina test|typecheck|build`.
 - [x] 2. `geometry.ts` + `reveal.ts` + boundary tests — §10 cases enumerated per file
 - [ ] 3. `<Vitrina>` + `<Plane>`: layers, drag, wheel, zoom, bounds — code complete,
      gate green, SSR smoke passed; browser check on `pnpm preview` still pending
-- [ ] 4. Reveal + tab order + teardown test
+- [ ] 4. Reveal + tab order + teardown test — code complete, gate green, DOM tests
+     against `framePass`; reveal rhythm / intro feel still need the real-browser check
 - [ ] 5. Grid view + Flip toggle
 - [ ] 6. Detail panel + flight state machine
 - [ ] 7. Themes, `base.css`, `<VitrinaControls>`, reduced-motion paths

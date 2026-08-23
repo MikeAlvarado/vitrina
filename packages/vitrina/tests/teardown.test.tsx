@@ -1,0 +1,173 @@
+// @vitest-environment jsdom
+/*
+ * Teardown: nothing GSAP survives the plane.
+ *
+ * It was a property of the design — every tween, Draggable and Observer lives in
+ * a context that reverts on cleanup — but a property nobody measures is a
+ * promise. This measures it, on every `pnpm check`.
+ *
+ * Four things are counted, and they are the four this library creates or could
+ * come to create: live tweens on the `globalTimeline` (pops, quickTo chasers,
+ * inertia throws), ScrollTrigger (none today — counted so one can never sneak in
+ * unnoticed), Observer (the wheel), and Draggable, which lives in no global list
+ * and has to be asked element by element — so the nodes are collected BEFORE
+ * unmounting, after which there is nowhere left to look.
+ *
+ * Every case first proves that mounting created something. A cleanup test on a
+ * component that never animated passes always and proves nothing.
+ *
+ * What this does NOT say, and cannot from jsdom: that the exit looks right. Feel
+ * is a real-browser check on `pnpm preview`.
+ */
+import { act } from 'react';
+import { gsap } from 'gsap';
+import { Draggable } from 'gsap/Draggable';
+import { Observer } from 'gsap/Observer';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { mountStrict, renderStrict, resizeSync, settle, stubDom } from './harness';
+import type { DomStubs } from './harness';
+
+interface LiveAnimations {
+  tweens: number;
+  scrollTriggers: number;
+  observers: number;
+}
+
+const NOTHING_LIVE: LiveAnimations = { tweens: 0, scrollTriggers: 0, observers: 0 };
+
+/**
+ * Trap: the globalTimeline is never empty once ScrollTrigger has been used — it
+ * parks two internal `delayedCall`s there forever. A delayedCall animates a
+ * FUNCTION; what this library creates animates elements. Filtering on that
+ * leaves GSAP's own bookkeeping out without a brittle allow-list.
+ */
+function animatesDom(child: gsap.core.Animation): boolean {
+  return (
+    child instanceof gsap.core.Tween &&
+    child.targets().some((target: unknown) => target instanceof Element)
+  );
+}
+
+/** What GSAP has live NOW, document-wide — an orphan hangs off no React tree, so the container cannot be asked. */
+function liveAnimationCount(): LiveAnimations {
+  return {
+    tweens: gsap.globalTimeline.getChildren(true, true, true).filter(animatesDom).length,
+    scrollTriggers: ScrollTrigger.getAll().length,
+    observers: Observer.getAll().length,
+  };
+}
+
+const total = (count: LiveAnimations) => count.tweens + count.scrollTriggers + count.observers;
+
+/** Draggables are in no global list: ask per element (`Draggable.get`), which is exactly what `kill()` clears. */
+const liveDraggables = (nodes: Element[]) =>
+  nodes.filter((node) => Draggable.get(node) !== undefined).length;
+
+const nodesOf = (container: HTMLElement): Element[] => [container, ...container.querySelectorAll('*')];
+
+/** Every Draggable the library created, dead or alive — `Draggable.get` only ever shows the latest per element. */
+let created: Draggable[] = [];
+const enabledDraggables = () => created.filter((d) => d.enabled());
+
+let stubs: DomStubs;
+
+beforeEach(() => {
+  created = [];
+  const realCreate = Draggable.create;
+  vi.spyOn(Draggable, 'create').mockImplementation((targets, vars) => {
+    const instances = realCreate.call(Draggable, targets, vars);
+    created.push(...instances);
+    return instances;
+  });
+  stubs = stubDom();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  document.body.innerHTML = '';
+});
+
+describe('teardown — nothing GSAP survives the plane', () => {
+  it('StrictMode mount creates exactly one interaction; unmount leaves nothing live', async () => {
+    const { host, pan, root } = await mountStrict();
+    const nodes = nodesOf(host);
+
+    // Mounting created something — and the double mount really happened.
+    expect(stubs.observersBuilt).toBeGreaterThanOrEqual(2);
+    expect(created.length).toBeGreaterThanOrEqual(1);
+    expect(total(liveAnimationCount())).toBeGreaterThan(0);
+    expect(liveAnimationCount().tweens).toBeGreaterThan(0); // intro pops + quickTo chasers
+    expect(liveDraggables(nodes)).toBe(1);
+
+    // Exactly one of each, after StrictMode's mount → unmount → remount.
+    expect(Draggable.get(pan)).toBe(enabledDraggables()[0]);
+    expect(enabledDraggables()).toHaveLength(1);
+    expect(Observer.getAll()).toHaveLength(1);
+    expect(Observer.getAll()[0]?.vars.type).toBe('wheel');
+
+    await act(async () => root.unmount());
+
+    expect(liveAnimationCount()).toEqual(NOTHING_LIVE);
+    expect(liveDraggables(nodes)).toBe(0);
+    expect(enabledDraggables()).toHaveLength(0);
+  });
+
+  it('unmounting before the plugin import resolves leaves nothing live', async () => {
+    /*
+     * The race the cancellation flag exists for, in its purest form: the cleanup
+     * runs while the import's continuation has not executed. Render and unmount
+     * are both synchronous `act`s with no await between them, so the `.then`
+     * cannot have run — whether the import is still in flight (first test in a
+     * fresh process) or already cached (any later run): a continuation is a
+     * microtask either way.
+     */
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    let root!: ReturnType<typeof renderStrict>;
+    act(() => {
+      root = renderStrict(host);
+    });
+    const nodes = nodesOf(host);
+
+    // The mount got far enough to matter: placement ran and the intro was queued
+    // (those are synchronous) — only the plugins were still on their way.
+    expect(liveAnimationCount().tweens).toBeGreaterThan(0);
+    expect(created).toHaveLength(0);
+
+    act(() => root.unmount());
+    await settle();
+
+    // The continuation ran for a mount that no longer exists — and created nothing.
+    expect(created).toHaveLength(0);
+    expect(liveAnimationCount()).toEqual(NOTHING_LIVE);
+    expect(liveDraggables(nodes)).toBe(0);
+  });
+
+  it('resizes racing the import leave exactly one interaction, and none after unmount', async () => {
+    /*
+     * Each synchronous resize re-runs the interaction effect: the previous run's
+     * cleanup fires before that run's `.then` continuation has executed, so —
+     * without the flag — every run that was ever started would still create its
+     * Draggable/Observer once the microtasks flush.
+     */
+    const { host, pan, root } = await mountStrict();
+    const nodes = nodesOf(host);
+    resizeSync(stubs, 1000, 700);
+    resizeSync(stubs, 900, 600);
+    resizeSync(stubs, 1100, 750);
+    await settle();
+
+    expect(created.length).toBeGreaterThanOrEqual(2);
+    expect(enabledDraggables()).toHaveLength(1);
+    expect(Draggable.get(pan)).toBe(enabledDraggables()[0]);
+    expect(Observer.getAll()).toHaveLength(1);
+
+    await act(async () => root.unmount());
+
+    expect(liveAnimationCount()).toEqual(NOTHING_LIVE);
+    expect(liveDraggables(nodes)).toBe(0);
+  });
+});

@@ -1,6 +1,6 @@
 /*
  * The explorable plane: a finite world panned by drag and wheel, zoomed in
- * discrete steps. Internal — consumers mount `<Vitrina>`.
+ * discrete steps, revealed as it is explored. Internal — consumers mount `<Vitrina>`.
  *
  * Two nested transform layers (§6.1), and why not one: moving and scaling the
  * SAME layer means every zoom change must recompute pan so the world point under
@@ -15,14 +15,16 @@
  * not depend on zoom: changing zoom is a single scale tween with NO pan
  * compensation, and dragging never fights it because it lives on the other layer.
  * A world point `w` paints on screen at `(w + pan − view/2) · zoom + view/2`;
- * bounds and (from the next step) visibility derive from that analytically —
- * zero `getBoundingClientRect()` per frame.
+ * bounds and visibility derive from that analytically — zero
+ * `getBoundingClientRect()` per frame.
  *
- * This step renders every object visible from the start: reveal, tab order, grid
- * view, and the detail flight are later steps.
+ * Visibility is ONE analytic pass per frame of movement (§6.4), `runPass` below,
+ * fed by pan and zoom and answering two questions at once: which objects may be
+ * in the tab order, and which unrevealed objects just entered the inset frame
+ * and get popped. Grid view and the detail flight are later steps.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useReducer, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { gsap } from 'gsap';
 import type { Draggable } from 'gsap/Draggable';
@@ -38,6 +40,13 @@ import type {
 import {
   DRAG_THRESHOLD_PX,
   EDGE_RESISTANCE,
+  INTRO_POP_SECONDS,
+  INTRO_SCALE,
+  REVEAL_GAP_MS,
+  REVEAL_INSET,
+  REVEAL_POP_EASE,
+  REVEAL_POP_SECONDS,
+  REVEAL_SCALE,
   WHEEL_CHASE_EASE,
   WHEEL_CHASE_SECONDS,
   WHEEL_SPEED,
@@ -45,9 +54,11 @@ import {
   ZOOM_TWEEN_SECONDS,
 } from '../defaults';
 import { generateInstances } from '../layout/generate';
+import { createRng } from '../layout/rng';
 import { loadInteractionPlugins, useGsapContext, useIsomorphicLayoutEffect } from '../gsap';
 import { centerPan, clampPan, panBounds, selectWorld } from './geometry';
 import type { Pan, Size } from './geometry';
+import { framePass, staggerDelays } from './reveal';
 
 /** Viewport and world measurements, cached — never re-measured per frame. */
 interface PlaneGeometry {
@@ -67,7 +78,7 @@ export interface PlaneProps {
   labels: VitrinaLabels;
   /** Target scale (a zoom step). The live, animated scale is tracked internally. */
   zoom: number;
-  /** Effective reduced motion: no inertia, no wheel smoothing, no zoom tween. */
+  /** Effective reduced motion: no intro, no pops, no inertia, no wheel smoothing, no zoom tween. */
   reduced: boolean;
 }
 
@@ -102,6 +113,15 @@ const OBJECT_STYLE: CSSProperties = {
   cursor: 'pointer',
 };
 
+/*
+ * Unrevealed = opacity 0 AND pointer-events none (§6.5): invisible but clickable
+ * would open a panel from empty plane. Both are GSAP-owned inline styles, so the
+ * reveal context's revert() restores the plain, server-rendered object.
+ */
+const hide = (targets: Element[], scale: number) =>
+  gsap.set(targets, { opacity: 0, scale, pointerEvents: 'none' });
+const show = (targets: Element[]) => gsap.set(targets, { opacity: 1, scale: 1, pointerEvents: 'auto' });
+
 export function Plane({
   entities,
   instances,
@@ -124,16 +144,54 @@ export function Plane({
   const draggableRef = useRef<Draggable | null>(null);
   /**
    * Geometry in a ref AS WELL as state: effects that must not recreate on resize
-   * (the zoom effect below) read it here instead of closing over the state.
+   * (the zoom effect and the reveal context below) read it here instead of
+   * closing over the state.
    */
   const geometryRef = useRef<PlaneGeometry | null>(null);
+
+  /*
+   * Reveal and tab-order state lives in refs, not React state: it changes on
+   * movement frames, and the DOM is written directly — only on change, never
+   * every frame. React never renders any of it, so a re-render can never clobber
+   * it either.
+   */
+  /** Instance id → its button. Filled by stable callback refs; the pass never queries the DOM. */
+  const nodesRef = useRef(new Map<string, HTMLButtonElement>());
+  /** One stable ref callback per instance id, so React only calls them on attach/detach. */
+  const nodeRefsRef = useRef(new Map<string, (el: HTMLButtonElement | null) => void>());
+  /**
+   * Ids the pass has claimed — queued for a pop, or shown. Handed to `framePass`
+   * as its revealed set so an id is never re-emitted while it waits its turn in a
+   * stagger. A queued pop that its context reverts before it starts is UNclaimed
+   * again (see the reveal context's cleanup) and re-enters on the next pass.
+   */
+  const claimedRef = useRef(new Set<string>());
+  /**
+   * Ids whose pop has started (or landed instantly). THIS is the permanent,
+   * revealed set — it survives the grid toggle and any context recreation.
+   */
+  const shownRef = useRef(new Set<string>());
+  /** Ids in frame per the last pass, revealed or not yet shown — consulted when a pop starts. */
+  const inFrameRef = useRef(new Set<string>());
+  /** Ids currently carrying tabindex=0 — the attribute is written only when this set changes. */
+  const tabbableRef = useRef(new Set<string>());
+  /** The reveal context: pops fired from movement frames are added to it so its revert() kills them. */
+  const revealCtxRef = useRef<gsap.Context | null>(null);
+  /** Seeded gap generator for pop staggers — the only randomness on this side of the library. */
+  const revealRngRef = useRef<(() => number) | null>(null);
+  /** True until the first batch pops: that batch is the intro, from INTRO_SCALE. */
+  const introPendingRef = useRef(true);
+  const placedRef = useRef<readonly VitrinaInstance[]>([]);
+  const reducedRef = useRef(reduced);
+  /** Re-renders once per finished reveal batch so `renderObject` sees `isRevealed` flip. */
+  const [, bumpRevealed] = useReducer((n: number) => n + 1, 0);
 
   const [geometry, setGeometry] = useState<PlaneGeometry | null>(null);
 
   /*
    * Measuring lives in its OWN layout effect, before and outside any GSAP
    * context. Geometry lands in state (the re-render is what hands it to the drag
-   * context below via its deps) and in the ref (for effects that must not recreate
+   * effect below via its deps) and in the ref (for effects that must not recreate
    * when the ResizeObserver fires again). Unchanged measurements return early so a
    * settling observer never churns the contexts.
    */
@@ -197,8 +255,151 @@ export function Plane({
 
   const entityById = useMemo(() => new Map(entities.map((e) => [e.id, e])), [entities]);
 
+  // Mirrors for the frame-driven code, which must read the CURRENT values without
+  // being recreated when they change. Declared before the effects that read them.
+  useIsomorphicLayoutEffect(() => {
+    placedRef.current = placed;
+  }, [placed]);
+  useIsomorphicLayoutEffect(() => {
+    reducedRef.current = reduced;
+  }, [reduced]);
+
+  const nodeRef = (id: string) => {
+    let ref = nodeRefsRef.current.get(id);
+    if (!ref) {
+      ref = (el) => {
+        if (el) {
+          nodesRef.current.set(id, el);
+          // An object that appears after the reveal context exists (consumer changed
+          // the instances) is born hidden like every other unrevealed one.
+          const ctx = revealCtxRef.current;
+          if (ctx && !shownRef.current.has(id)) ctx.add(() => hide([el], REVEAL_SCALE));
+        } else {
+          nodesRef.current.delete(id);
+        }
+      };
+      nodeRefsRef.current.set(id, ref);
+    }
+    return ref;
+  };
+
+  /** A pop has started (or landed): the object is visible, clickable, and — if in frame — tabbable. */
+  const markShown = (id: string, el: HTMLButtonElement) => {
+    shownRef.current.add(id);
+    el.style.pointerEvents = 'auto';
+    el.setAttribute('data-vitrina-revealed', '');
+    if (inFrameRef.current.has(id) && !tabbableRef.current.has(id)) {
+      tabbableRef.current.add(id);
+      el.tabIndex = 0;
+    }
+  };
+
+  /**
+   * Pops one batch of newly entered objects. Runs inside the reveal context so
+   * the tweens belong to it. The first batch is the intro (slower, from
+   * INTRO_SCALE); every later one is a reveal (from REVEAL_SCALE). Gaps between
+   * pops are seeded random — a fixed step reads as a mechanical wave. Under
+   * reduced motion objects simply appear, in the same order, at once.
+   */
+  const reveal = (ids: string[]) => {
+    const ctx = revealCtxRef.current;
+    const rng = revealRngRef.current;
+    // Before the reveal context exists nothing is hidden yet; leave these
+    // unrevealed and let the context's own first pass claim them.
+    if (!ctx || !rng) return;
+    for (const id of ids) claimedRef.current.add(id);
+    const intro = introPendingRef.current;
+    introPendingRef.current = false;
+
+    const batch: Array<[string, HTMLButtonElement]> = [];
+    for (const id of ids) {
+      const el = nodesRef.current.get(id);
+      if (el) batch.push([id, el]);
+    }
+    if (batch.length === 0) return;
+
+    ctx.add(() => {
+      if (reducedRef.current) {
+        show(batch.map(([, el]) => el));
+        for (const [id, el] of batch) markShown(id, el);
+        bumpRevealed();
+        return;
+      }
+      const delays = staggerDelays(batch.length, rng, REVEAL_GAP_MS);
+      const from = intro ? INTRO_SCALE : REVEAL_SCALE;
+      const duration = intro ? INTRO_POP_SECONDS : REVEAL_POP_SECONDS;
+      batch.forEach(([id, el], i) => {
+        gsap.fromTo(
+          el,
+          { opacity: 0, scale: from },
+          {
+            opacity: 1,
+            scale: 1,
+            duration,
+            ease: REVEAL_POP_EASE,
+            delay: (delays[i] ?? 0) / 1000,
+            // from/fromTo defer their initial state to the end of the tick by
+            // default; the object must never paint a frame un-hidden before its pop.
+            lazy: false,
+            onStart: () => markShown(id, el),
+            onComplete: i === batch.length - 1 ? bumpRevealed : undefined,
+          },
+        );
+      });
+    });
+  };
+
+  /**
+   * THE pass (§6.4): one analytic evaluation of every instance against the
+   * current pan and zoom, answering tab order and reveal together. Called on
+   * every frame of movement and at every (re)placement. No DOM reads; DOM writes
+   * only where the answer changed. Lives outside any reduced-motion branch —
+   * focus is not decoration and behaves identically under reduced motion.
+   */
+  const runPass = () => {
+    const geo = geometryRef.current;
+    const pan = panRef.current;
+    if (!geo || !pan) return;
+    const nodes = nodesRef.current;
+    const { focusable, entering } = framePass(
+      placedRef.current,
+      { w: geo.viewW, h: geo.viewH },
+      pan,
+      zoomRef.current,
+      REVEAL_INSET,
+      claimedRef.current,
+    );
+
+    // Tab order: revealed ∩ in frame, minus those whose pop has not started yet
+    // (still at opacity 0 — a focus ring over empty plane). Entering objects are
+    // in frame by construction (centre inside the inset frame), so they are
+    // recorded here and become tabbable the moment their pop starts. Diff against
+    // the previous set and touch only the buttons that changed.
+    const inFrame = new Set(focusable);
+    for (const id of entering) inFrame.add(id);
+    inFrameRef.current = inFrame;
+    const next = new Set<string>();
+    for (const id of focusable) if (shownRef.current.has(id)) next.add(id);
+    const prev = tabbableRef.current;
+    for (const id of prev) {
+      if (!next.has(id)) {
+        const el = nodes.get(id);
+        if (el) el.tabIndex = -1;
+      }
+    }
+    for (const id of next) {
+      if (!prev.has(id)) {
+        const el = nodes.get(id);
+        if (el) el.tabIndex = 0;
+      }
+    }
+    tabbableRef.current = next;
+
+    if (entering.length > 0) reveal(entering);
+  };
+
   // Every mover mirrors the pan layer's transform into panRef from its own
-  // onUpdate. (The next step's visibility pass hooks in here too.)
+  // onUpdate, then runs the pass on that fresh pan.
   const syncPan = () => {
     const panLayer = panLayerRef.current;
     if (!panLayer) return;
@@ -206,26 +407,27 @@ export function Plane({
       x: gsap.getProperty(panLayer, 'x') as number,
       y: gsap.getProperty(panLayer, 'y') as number,
     };
+    runPass();
   };
 
   /*
-   * Drag + wheel. This effect DOES depend on the measured geometry — world
-   * bounds and centering come from it — and recreates on every real resize, which
-   * is cheap: nothing here animates, it only places the plane and rebuilds the
-   * Draggable/Observer. `zoom` is deliberately NOT a dep: a zoom click must not
-   * destroy the Draggable mid-inertia (bounds are re-applied by the zoom effect
-   * below; the closure's `zoom` is still fresh at every re-creation because a
-   * dep change always rides a re-render).
+   * Placement + drag + wheel. This effect DOES depend on the measured geometry —
+   * world bounds and centering come from it — and recreates on every real
+   * resize, which is cheap: nothing here animates, it only places the plane and
+   * rebuilds the Draggable/Observer. `zoom` is deliberately NOT a dep: a zoom
+   * click must not destroy the Draggable mid-inertia (bounds are re-applied by
+   * the zoom effect below).
    *
-   * The interaction plugins arrive via dynamic import (SSR + bundle size, see
-   * gsap.ts), so everything below is created AFTER an await. That changes the
-   * cleanup contract: a resize or reduced-motion flip before the plugins land (or
-   * StrictMode's double mount — same shape) runs the cleanup while the import is
-   * still pending — there is no instance to kill yet, and a `gsap.context`
-   * reverted then cannot revert what has not been created. Hence
-   * the `cancelled` flag checked after the await, and the instances held in
-   * closure variables the cleanup kills explicitly. Until the plugins land the
-   * plane renders static — the same markup the server produced.
+   * Placement is synchronous and plugin-free, so the plane is centred — and the
+   * first pass has a pan to work with — before the first paint, without waiting
+   * for the import. The interaction plugins arrive via dynamic import (SSR +
+   * bundle size, see gsap.ts), so Draggable and Observer are created AFTER an
+   * await. That changes the cleanup contract: a resize or reduced-motion flip
+   * before the plugins land (or StrictMode's double mount — same shape) runs the
+   * cleanup while the import is still pending — there is no instance to kill
+   * yet, and a context reverted then cannot revert what has not been created.
+   * Hence the `cancelled` flag checked after the await, and the instances held
+   * in closure variables the cleanup kills explicitly.
    */
   useIsomorphicLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -233,30 +435,39 @@ export function Plane({
     const panLayer = panLayerRef.current;
     if (!viewport || !zoomLayer || !panLayer || !geometry) return;
 
+    const view: Size = { w: geometry.viewW, h: geometry.viewH };
+    const world: Size = { w: geometry.worldW, h: geometry.worldH };
+
     let cancelled = false;
-    let ctx: gsap.Context | null = null;
     let drag: Draggable | null = null;
     let wheel: Observer | null = null;
+
+    const ctx = gsap.context(() => {
+      // The LIVE scale, not the prop: recreating this effect mid-zoom-tween must
+      // not snap the scale to the target.
+      gsap.set(zoomLayer, { scale: zoomRef.current });
+
+      // First mount centres the world — with the zoom origin at the viewport
+      // centre that pan is zoom-invariant. Later runs keep the travelled pan,
+      // re-clamped against the (possibly new) world.
+      const start = clampPan(
+        panRef.current ?? centerPan(world, view),
+        panBounds(world, view, zoom),
+      );
+      panRef.current = start;
+      gsap.set(panLayer, { x: start.x, y: start.y });
+    }, viewport);
+    // A new viewport size means new objects in frame.
+    runPass();
 
     void loadInteractionPlugins().then(({ Draggable, Observer }) => {
       // Cleanup already ran: this mount is gone, create nothing for it.
       if (cancelled) return;
 
-      ctx = gsap.context(() => {
-        const view: Size = { w: geometry.viewW, h: geometry.viewH };
-        const world: Size = { w: geometry.worldW, h: geometry.worldH };
-
-        // The LIVE scale, not the prop: recreating this effect mid-zoom-tween
-        // must not snap the scale to the target.
-        gsap.set(zoomLayer, { scale: zoomRef.current });
-
-        // First mount centres the world — with the zoom origin at the viewport
-        // centre that pan is zoom-invariant. Later runs keep the travelled pan,
-        // re-clamped against the (possibly new) world.
-        const bounds = panBounds(world, view, zoom);
-        const start = clampPan(panRef.current ?? centerPan(world, view), bounds);
-        panRef.current = start;
-        gsap.set(panLayer, { x: start.x, y: start.y });
+      ctx.add(() => {
+        // The target this render's zoom effect has applied by now — the closure's
+        // `zoom` could be a step behind if a click landed before the import did.
+        const bounds = panBounds(world, view, zoomAppliedRef.current);
 
         /*
          * Safety net: one Draggable per node, ever. A survivor here means a
@@ -323,7 +534,7 @@ export function Plane({
             panToY(target.y);
           },
         });
-      }, viewport);
+      });
     });
 
     return () => {
@@ -335,13 +546,12 @@ export function Plane({
       draggableRef.current = null;
       wheel?.kill();
       wheel = null;
-      ctx?.revert();
-      ctx = null;
+      ctx.revert();
     };
   }, [geometry, reduced]);
 
   /*
-   * Zoom, in its own context: with `zoom` in the drag context's deps every click
+   * Zoom, in its own context: with `zoom` in the drag effect's deps every click
    * would destroy and recreate the Draggable and Observer mid-inertia. Geometry is
    * read from the REF, not the deps — a resize mid-tween would recreate this
    * context and its revert() would snap the scale back.
@@ -349,13 +559,22 @@ export function Plane({
    * Recreation still reverts the previous run's tweens, so setup starts by
    * restoring the live values from the refs. Revert and restore happen in the same
    * layout pass, so the reverted state never paints.
+   *
+   * Written out (not via useGsapContext) because the pass must run AFTER the
+   * context is built: `reveal()` adds pops to the reveal context, and GSAP's
+   * `Context.add()` called while another context is under construction nests the
+   * called context INTO the one being built — the next zoom's revert would then
+   * take every pop with it. Tween callbacks (the motion branch) run outside any
+   * construction, so they are safe; the instant branch is the one that must wait.
    */
-  useGsapContext(
-    () => {
-      const zoomLayer = zoomLayerRef.current;
-      const panLayer = panLayerRef.current;
-      if (!zoomLayer || !panLayer) return;
+  useIsomorphicLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const zoomLayer = zoomLayerRef.current;
+    const panLayer = panLayerRef.current;
+    if (!viewport || !zoomLayer || !panLayer) return;
 
+    let passAfter = false;
+    const ctx = gsap.context(() => {
       gsap.set(zoomLayer, { scale: zoomRef.current });
       const pan = panRef.current;
       if (pan) gsap.set(panLayer, { x: pan.x, y: pan.y });
@@ -366,7 +585,7 @@ export function Plane({
       const geo = geometryRef.current;
       if (!geo) {
         // Zoomed before the first measurement: nothing to clamp against yet; land
-        // instantly. The drag context re-reads zoomRef when geometry arrives.
+        // instantly. The drag effect re-reads zoomRef when geometry arrives.
         zoomRef.current = zoom;
         gsap.set(zoomLayer, { scale: zoom });
         return;
@@ -400,6 +619,7 @@ export function Plane({
       if (reduced) {
         zoomRef.current = zoom;
         gsap.set(zoomLayer, { scale: zoom });
+        passAfter = true;
       } else {
         gsap.to(zoomLayer, {
           scale: zoom,
@@ -407,12 +627,68 @@ export function Plane({
           ease: ZOOM_TWEEN_EASE,
           onUpdate: () => {
             zoomRef.current = gsap.getProperty(zoomLayer, 'scaleX') as number;
+            runPass();
           },
         });
       }
+    }, viewport);
+    if (passAfter) runPass();
+
+    return () => ctx.revert();
+  }, [zoom, reduced]);
+
+  /*
+   * Reveal context (§6.7). Depends on the boolean `measured`, NEVER on the
+   * geometry object: the ResizeObserver's second measurement would recreate the
+   * context and its revert() would kill the intro and every pop in flight — no
+   * console error, the objects simply end up visible and un-animated. Geometry is
+   * read from the ref inside the pass. `reduced` is read from its ref for the same
+   * reason: a flip mid-intro must not revert the intro.
+   *
+   * Runs after the placement effect above (declaration order), so the first pass
+   * already has a pan: the intro pops right here, before the first paint of the
+   * measured plane, without waiting for the plugins.
+   */
+  const measured = geometry !== null;
+  useGsapContext(
+    (self) => {
+      const panLayer = panLayerRef.current;
+      if (!panLayer || !measured) return;
+      revealCtxRef.current = self;
+      revealRngRef.current ??= createRng(`${layout.seed}:reveal`);
+
+      // Baseline: everything not yet shown is hidden, everything shown is shown
+      // (a previous run's revert restored the plain markup). Tab order starts
+      // empty and is rebuilt by the pass.
+      const hidden: Element[] = [];
+      const visible: Element[] = [];
+      for (const [id, el] of nodesRef.current) {
+        (shownRef.current.has(id) ? visible : hidden).push(el);
+      }
+      if (hidden.length > 0) hide(hidden, introPendingRef.current ? INTRO_SCALE : REVEAL_SCALE);
+      if (visible.length > 0) show(visible);
+      for (const id of tabbableRef.current) {
+        const el = nodesRef.current.get(id);
+        if (el) el.tabIndex = -1;
+      }
+      tabbableRef.current = new Set();
+
+      runPass();
+
+      return () => {
+        revealCtxRef.current = null;
+        // Revert just killed every pop still waiting in a stagger. Those objects
+        // are back at their plain markup and have never been seen: unclaim them so
+        // the next context's first pass pops them again (as the intro, if nothing
+        // ever showed) instead of showing them un-animated.
+        for (const id of claimedRef.current) {
+          if (!shownRef.current.has(id)) claimedRef.current.delete(id);
+        }
+        if (shownRef.current.size === 0) introPendingRef.current = true;
+      };
     },
     viewportRef,
-    [zoom, reduced],
+    [measured],
   );
 
   // Before the first measurement (and on the server) the pan layer takes the
@@ -450,11 +726,16 @@ export function Plane({
             return (
               <button
                 key={inst.id}
+                ref={nodeRef(inst.id)}
                 type="button"
                 data-vitrina-object=""
                 data-vitrina-instance={inst.id}
                 data-vitrina-entity={inst.entityId}
                 aria-label={labels.objectLabel(entity)}
+                // Nothing is tabbable until the pass says so: the server and the
+                // un-measured client agree, and the pass writes tabindex directly —
+                // this prop never changes, so React never fights it.
+                tabIndex={-1}
                 style={{
                   ...OBJECT_STYLE,
                   left: inst.x,
@@ -466,7 +747,7 @@ export function Plane({
                 {renderObject(entity, {
                   instanceId: inst.id,
                   isActive: false,
-                  isRevealed: true,
+                  isRevealed: shownRef.current.has(inst.id),
                   view: 'plane',
                 })}
               </button>
