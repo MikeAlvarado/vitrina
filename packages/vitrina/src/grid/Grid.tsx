@@ -36,6 +36,13 @@ export interface GridProps {
   labels: VitrinaLabels;
   reduced: boolean;
   session: Session;
+  /** Instances whose copies are in flight, in the panel, or dissolving — their cards are hidden. */
+  hiddenIds: ReadonlySet<string>;
+  /** The entity the panel shows: its card reports `isActive`. */
+  activeEntityId: string | null;
+  onOpen: (entityId: string, instanceId: string) => void;
+  /** Registers each card with the root, under the instance it stands for. */
+  onNode: (instanceId: string, el: HTMLElement | null) => void;
 }
 
 /*
@@ -65,6 +72,9 @@ const GRID_STYLE: CSSProperties = {
   gap: 'var(--vitrina-grid-gap, 80px)',
   justifyContent: 'center',
   alignContent: 'start',
+  // Same floor as the plane: the whole card layer sits below the panel and the
+  // flight, on one rung, the active card hidden (visibility) while its clone flies.
+  zIndex: 'var(--vitrina-z-plane, 10)',
 };
 
 const CARD_STYLE: CSSProperties = {
@@ -85,12 +95,17 @@ export function Grid({
   labels,
   reduced,
   session,
+  hiddenIds,
+  activeEntityId,
+  onOpen,
+  onNode,
 }: GridProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   /** Entity id → its card. Filled by stable callback refs. */
   const cardsRef = useRef(new Map<string, HTMLButtonElement>());
   const cardRefsRef = useRef(new Map<string, (el: HTMLButtonElement | null) => void>());
   const reducedRef = useRef(reduced);
+  const onNodeRef = useRef(onNode);
 
   /** Instance ids per entity, in plane order — the candidates a card can pair with. */
   const instancesByEntity = useMemo(() => {
@@ -110,11 +125,17 @@ export function Grid({
   useIsomorphicLayoutEffect(() => {
     reducedRef.current = reduced;
   }, [reduced]);
+  useIsomorphicLayoutEffect(() => {
+    onNodeRef.current = onNode;
+  }, [onNode]);
 
   const cardRef = (entityId: string) => {
     let ref = cardRefsRef.current.get(entityId);
     if (!ref) {
       ref = (el) => {
+        // Registered under the instance the card stands for — the id the root
+        // hides and flies from; the Flip pairing (`data-flip-id`) is separate.
+        onNodeRef.current(representative(entityId), el);
         if (el) cardsRef.current.set(entityId, el);
         else cardsRef.current.delete(entityId);
       };
@@ -212,11 +233,15 @@ export function Grid({
           data-vitrina-entity={entity.id}
           data-flip-id={representative(entity.id)}
           aria-label={labels.objectLabel(entity)}
-          style={CARD_STYLE}
+          onClick={() => onOpen(entity.id, representative(entity.id))}
+          style={{
+            ...CARD_STYLE,
+            visibility: hiddenIds.has(representative(entity.id)) ? 'hidden' : undefined,
+          }}
         >
           {renderObject(entity, {
             instanceId: representative(entity.id),
-            isActive: false,
+            isActive: entity.id === activeEntityId,
             isRevealed: true,
             view: 'grid',
           })}

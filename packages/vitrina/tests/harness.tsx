@@ -12,6 +12,7 @@ import { StrictMode, act } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
+import { gsap } from 'gsap';
 import { vi } from 'vitest';
 
 import { Vitrina, useVitrina } from '../src';
@@ -25,6 +26,8 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 export const VIEW = { width: 1200, height: 800 };
+/** Where the stub places the detail slot (the flight's destination). */
+export const SLOT = { x: 800, y: 100, size: 240 };
 
 export const entities: VitrinaEntity[] = Array.from({ length: 15 }, (_, i) => ({ id: `e${i}` }));
 
@@ -105,15 +108,25 @@ export function stubDom(): DomStubs {
         height,
         toJSON: () => ({}),
       });
-      if (this.hasAttribute('data-vitrina-viewport') || this.hasAttribute('data-vitrina-grid')) {
+      if (
+        this.hasAttribute('data-vitrina-viewport') ||
+        this.hasAttribute('data-vitrina-grid') ||
+        this.hasAttribute('data-vitrina-root')
+      ) {
         return rect(0, 0, stubs.view.width, stubs.view.height);
       }
       // Plane objects sit where their inline position says; grid cards (no inline
       // position) at the origin. Enough for Flip to see a real delta between views.
-      if (this.hasAttribute('data-vitrina-object') && this instanceof HTMLElement) {
+      // The flight visual likewise: GSAP writes its box as inline px.
+      if (
+        (this.hasAttribute('data-vitrina-object') || this.hasAttribute('data-vitrina-flight')) &&
+        this instanceof HTMLElement
+      ) {
         const size = parseFloat(this.style.width) || 240;
         return rect(parseFloat(this.style.left) || 0, parseFloat(this.style.top) || 0, size, size);
       }
+      // The detail slot: somewhere on the right half, so a flight has a real delta.
+      if (this.hasAttribute('data-vitrina-slot')) return rect(SLOT.x, SLOT.y, SLOT.size, SLOT.size);
       return rect(0, 0, 0, 0);
     });
   return stubs;
@@ -193,3 +206,64 @@ export function resizeSync(stubs: DomStubs, width: number, height: number): void
 
 export const objectsOf = (host: HTMLElement): HTMLButtonElement[] =>
   Array.from(host.querySelectorAll<HTMLButtonElement>('[data-vitrina-object]'));
+
+/** Lands every pop queued so far (and anything else on the global timeline). */
+export function landTimeline(): void {
+  act(() => {
+    gsap.globalTimeline.time(gsap.globalTimeline.time() + 5);
+  });
+}
+
+/** The plane objects whose pop has started — the ones a click can open. */
+export const revealedObjectsOf = (host: HTMLElement): HTMLButtonElement[] =>
+  objectsOf(host).filter((el) => el.hasAttribute('data-vitrina-revealed'));
+
+/** Live tweens whose targets include `el`. */
+export const tweensOn = (el: Element): gsap.core.Animation[] =>
+  gsap.globalTimeline
+    .getChildren(true, true, false)
+    .filter((t) => t.targets().some((target: unknown) => target === el));
+
+export const detailOf = (host: HTMLElement) => ({
+  layer: host.querySelector<HTMLElement>('[data-vitrina-detail]'),
+  panel: host.querySelector<HTMLElement>('[data-vitrina-panel]'),
+  card: host.querySelector<HTMLElement>('[data-vitrina-panel-card]'),
+  slot: host.querySelector<HTMLElement>('[data-vitrina-slot]'),
+  content: host.querySelector<HTMLElement>('[data-vitrina-detail-content]'),
+  // The flight layers are PORTALLED to document.body — outside `host`.
+  portal: document.querySelector<HTMLElement>('[data-vitrina-flight-portal]'),
+  flightLayer: document.querySelector<HTMLElement>('[data-vitrina-flight-layer]'),
+  flight: document.querySelector<HTMLElement>('[data-vitrina-flight]'),
+  relayLayer: document.querySelector<HTMLElement>('[data-vitrina-relay-layer]'),
+  relay: document.querySelector<HTMLElement>('[data-vitrina-relay]'),
+  panelAnim: host.querySelector('[data-vitrina-panel]')?.getAttribute('data-vitrina-panel-anim') ?? null,
+  panelPhase: host.querySelector('[data-vitrina-panel]')?.getAttribute('data-vitrina-panel-phase') ?? null,
+  // The root that drives chrome is the widget's, not the portal peer: query within host.
+  detailPhase: host.querySelector('[data-vitrina-root]')?.getAttribute('data-vitrina-panel-phase') ?? null,
+});
+
+/**
+ * Advances the timeline until the flight and relay layers hold no live tweens,
+ * AND the panel has finished revealing/covering (its `delayedCall`s are on the
+ * same global timeline). A relay drains across several completions — one landing
+ * spawns the next flight — so a single jump is not enough. Bounded so a stuck
+ * machine fails loudly instead of hanging.
+ */
+export function landUntilSettled(host: HTMLElement): void {
+  for (let i = 0; i < 24; i++) {
+    landTimeline();
+    const { flight, relay, panelPhase } = detailOf(host);
+    const live = (flight ? tweensOn(flight).length : 0) + (relay ? tweensOn(relay).length : 0);
+    // Still opening (waiting for reveal) or covering means a delayedCall is pending.
+    const settling = panelPhase === 'covering';
+    if (live === 0 && !settling) break;
+  }
+}
+
+/** Presses Escape the way a visitor does: a keydown on whatever has focus, bubbling to the document. */
+export function pressEscape(): void {
+  act(() => {
+    const target = document.activeElement ?? document.body;
+    target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  });
+}

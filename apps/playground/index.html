@@ -5,8 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>playground</title>
   </head>
-  <!-- Scratch app: no stylesheet of its own. The black is the page's, on purpose —
-       the library paints no background until its theme CSS exists. -->
+  <!-- Scratch app: no stylesheet of its own beyond this. The black is the page's, on
+       purpose — the library paints no background until its theme CSS exists. The
+       panel gets a surface here so the flight's destination can be seen; the theme
+       CSS of step 7 replaces it. -->
+  <style>
+    /* The card is the surface that wipes open; the background rides it so the
+       reveal uncovers something. The wrapper stays transparent. */
+    [data-vitrina-panel-card] {
+      background: #111;
+      padding: 24px;
+    }
+    [data-vitrina-slot] {
+      margin: 0 auto;
+    }
+  </style>
   <body style="margin: 0; background: #000; color: #fff; overscroll-behavior: none">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

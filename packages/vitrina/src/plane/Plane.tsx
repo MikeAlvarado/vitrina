@@ -25,7 +25,13 @@
  *
  * Pan, the revealed sets and the intro flag live in the session the root owns:
  * the view toggle unmounts this component, and coming back from the grid must
- * land where the visitor was. The detail flight is a later step.
+ * land where the visitor was.
+ *
+ * The detail flight is the root's: this component only reports clicks
+ * (`onOpen`), registers its buttons (`onNode`) so the root can measure the
+ * origin and return focus to it, and hides the ONE instance whose copy is
+ * showing elsewhere (`hiddenId`, `visibility: hidden` — a hidden element takes
+ * no focus and no clicks, and keeps its box for the flight to measure).
  */
 
 import { useMemo, useReducer, useRef, useState } from 'react';
@@ -94,6 +100,13 @@ export interface PlaneProps {
   reduced: boolean;
   /** Owned by the root; outlives this component across view toggles. */
   session: Session;
+  /** Instances whose copies are in flight, in the panel, or dissolving — hidden here. */
+  hiddenIds: ReadonlySet<string>;
+  /** The entity the panel shows: every copy of it reports `isActive`. */
+  activeEntityId: string | null;
+  onOpen: (entityId: string, instanceId: string) => void;
+  /** Registers each object button with the root, by exact instance id. */
+  onNode: (instanceId: string, el: HTMLElement | null) => void;
 }
 
 /*
@@ -109,6 +122,13 @@ const VIEWPORT_STYLE: CSSProperties = {
   overflow: 'hidden',
   touchAction: 'none',
   cursor: 'grab',
+  // The whole plane sits on ONE stacking rung, below the panel and the flight.
+  // Setting z-index here makes the viewport a stacking context that confines
+  // every object — the active one included — beneath the panel: a dragged object
+  // passing under the panel ducks behind it. No object ever carries its own
+  // z-index; the active one is hidden (visibility) while its clone flies, never
+  // raised. The token is the floor of the scale in base.css.
+  zIndex: 'var(--vitrina-z-plane, 10)',
 };
 
 const ZOOM_LAYER_STYLE: CSSProperties = {
@@ -145,6 +165,10 @@ export function Plane({
   zoom,
   reduced,
   session,
+  hiddenIds,
+  activeEntityId,
+  onOpen,
+  onNode,
 }: PlaneProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const zoomLayerRef = useRef<HTMLDivElement>(null);
@@ -184,6 +208,8 @@ export function Plane({
   const revealRngRef = useRef<(() => number) | null>(null);
   const placedRef = useRef<readonly VitrinaInstance[]>([]);
   const reducedRef = useRef(reduced);
+  /** The node callbacks below are created once per id; they read the current registrar here. */
+  const onNodeRef = useRef(onNode);
   /** Re-renders once per finished reveal batch so `renderObject` sees `isRevealed` flip. */
   const [, bumpRevealed] = useReducer((n: number) => n + 1, 0);
 
@@ -297,11 +323,15 @@ export function Plane({
   useIsomorphicLayoutEffect(() => {
     reducedRef.current = reduced;
   }, [reduced]);
+  useIsomorphicLayoutEffect(() => {
+    onNodeRef.current = onNode;
+  }, [onNode]);
 
   const nodeRef = (id: string) => {
     let ref = nodeRefsRef.current.get(id);
     if (!ref) {
       ref = (el) => {
+        onNodeRef.current(id, el);
         if (el) {
           nodesRef.current.set(id, el);
           // An object that appears after the reveal context exists (consumer changed
@@ -811,17 +841,21 @@ export function Plane({
                 // un-measured client agree, and the pass writes tabindex directly —
                 // this prop never changes, so React never fights it.
                 tabIndex={-1}
+                onClick={() => onOpen(inst.entityId, inst.id)}
                 style={{
                   ...OBJECT_STYLE,
                   left: inst.x,
                   top: inst.y,
                   width: inst.size,
                   height: inst.size,
+                  // React owns `visibility`; GSAP owns opacity/scale/pointer-events.
+                  // Neither ever writes the other's.
+                  visibility: hiddenIds.has(inst.id) ? 'hidden' : undefined,
                 }}
               >
                 {renderObject(entity, {
                   instanceId: inst.id,
-                  isActive: false,
+                  isActive: inst.entityId === activeEntityId,
                   isRevealed: shown.has(inst.id),
                   view: 'plane',
                 })}

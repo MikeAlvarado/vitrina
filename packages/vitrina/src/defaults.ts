@@ -78,3 +78,29 @@ export const GRID_GAP = 80;
 /** The Flip of every object between plane and grid. Library tuning. */
 export const VIEW_FLIP_SECONDS = 0.7;
 export const VIEW_FLIP_EASE = 'power3.inOut';
+
+/*
+ * Detail flight: one object, plane ↔ panel. Library tuning. The slot the object
+ * lands in and the panel's width are custom properties (`--vitrina-detail-object`,
+ * `--vitrina-panel-width`) for the same reason as the grid's: a theme retunes
+ * them under media queries, which inline styles cannot.
+ */
+export const DETAIL_FLIGHT_SECONDS = 0.6;
+export const DETAIL_FLIGHT_EASE = 'power3.inOut';
+export const DETAIL_PANEL_EASE = 'power3.inOut';
+export const DETAIL_OBJECT_SIZE = 240;
+/**
+ * The panel's own entrance/exit (a clip-path wipe, `base.css`) and its
+ * between-objects height tween. Mirror of the motion custom property, read from
+ * it at runtime and used only as the fallback when the stylesheet is absent
+ * (SSR, jsdom). The CSS variable is the source of truth.
+ */
+export const DETAIL_PANEL_SECONDS = 0.45;
+/*
+ * The two durations the choreography reads at runtime, so the panel wipe (CSS)
+ * and the object flights (GSAP) stay glued to the same numbers. A theme, or
+ * devtools, retunes them here — `--vitrina-dur-flight` at 2s makes the whole
+ * sequence deliberate in slow motion.
+ */
+export const DETAIL_FLIGHT_DURATION_VAR = '--vitrina-dur-flight';
+export const DETAIL_PANEL_DURATION_VAR = '--vitrina-dur-panel';

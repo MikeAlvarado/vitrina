@@ -26,7 +26,22 @@ import { Observer } from 'gsap/Observer';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Probe, currentApi, mountStrict, renderStrict, requirePan, resizeSync, settle, stubDom } from './harness';
+import {
+  Probe,
+  currentApi,
+  detailOf,
+  landTimeline,
+  landUntilSettled,
+  mountStrict,
+  pressEscape,
+  renderStrict,
+  requirePan,
+  resizeSync,
+  revealedObjectsOf,
+  settle,
+  stubDom,
+  tweensOn,
+} from './harness';
 import type { DomStubs } from './harness';
 
 interface LiveAnimations {
@@ -206,6 +221,51 @@ describe('teardown — nothing GSAP survives the plane', () => {
 
     expect(liveAnimationCount()).toEqual(NOTHING_LIVE);
     expect(liveDraggables(panLayers)).toBe(0);
+    expect(enabledDraggables()).toHaveLength(0);
+  });
+
+  it('opening, closing, relaying to another, and unmounting mid-flight leaves nothing live', async () => {
+    const { host, root } = await mountStrict({ children: <Probe /> });
+    const nodes = nodesOf(host);
+    landTimeline();
+    // Two revealed objects of DIFFERENT entities (same-entity opens are no-ops).
+    const byEntity = new Map<string, HTMLButtonElement>();
+    for (const el of revealedObjectsOf(host)) {
+      const e = el.getAttribute('data-vitrina-entity') ?? '';
+      if (!byEntity.has(e)) byEntity.set(e, el);
+    }
+    const [first, second] = [...byEntity.values()];
+    if (!first || !second) throw new Error('need two revealed objects of different entities');
+
+    // Open and settle: reveal delayedCall, then the fly-in, then shown.
+    act(() => first.click());
+    landUntilSettled(host);
+    expect(currentApi().detailPhase).toBe('open');
+    const flightA = detailOf(host).flight;
+    if (!flightA) throw new Error('no flight visual');
+
+    // Close (mirror of open): the panel covers first with the object parked above
+    // it, then the object flies home. Either way it settles to closed.
+    pressEscape();
+    landUntilSettled(host);
+    expect(detailOf(host).layer).toBeNull();
+
+    // Open another, relay to a different one mid-flight, and unmount with a flight
+    // (and the relay) still in the air.
+    act(() => second.click());
+    landTimeline(); // reveal → second flies in
+    act(() => first.click()); // relay: first swaps in, second flies home
+    const flightB = detailOf(host).flight;
+    const relayB = detailOf(host).relay;
+    if (!flightB || !relayB) throw new Error('no flight/relay visual');
+    const flying = [flightA, flightB, relayB, ...nodesOf(host)];
+    expect(flying.flatMap(tweensOn).length).toBeGreaterThan(0);
+
+    await act(async () => root.unmount());
+
+    expect(liveAnimationCount()).toEqual(NOTHING_LIVE);
+    expect(flying.flatMap(tweensOn)).toHaveLength(0);
+    expect(liveDraggables(nodes)).toBe(0);
     expect(enabledDraggables()).toHaveLength(0);
   });
 });

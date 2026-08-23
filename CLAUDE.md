@@ -34,8 +34,8 @@ need rewriting on a rename — a rename must stay a single find-and-replace.
 - **SSR-safe:** no `window`/`document`/`matchMedia` at module scope. Server renders
   objects at generated positions, plain; client takes over on hydrate.
 - Modules marked PURE (`layout/generate.ts`, `layout/rng.ts`, `plane/geometry.ts`,
-  `plane/reveal.ts`) import nothing from React, GSAP, or the DOM. They get the
-  exhaustive unit tests.
+  `plane/reveal.ts`, `detail/machine.ts`) import nothing from React, GSAP, or the DOM.
+  They get the exhaustive unit tests.
 
 ## The mechanic — non-negotiable details (§6 of the build brief)
 
@@ -63,12 +63,13 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
   clickable opens a panel from empty plane). Scale 0.6 → 1; gap between pops seeded
   random 30–80 ms (a fixed step reads as a mechanical wave). Revealed is permanent,
   survives the grid toggle.
-- **Detail flight is an explicit state machine** `idle → opening → open → closing →
-idle`; exactly one visible copy of the active object at any moment. `Flip` moves it.
-  The plane stays interactive on the other half — no overlay, no focus trap. Escape
-  closes; focus returns to the originating button. Programmatic `.focus()` fires
-  `:focus-visible` in Chrome, so object buttons need `outline: none` + a deliberate
-  `:focus-visible` ring.
+- **The detail is TWO decoupled lifecycles.** The PANEL is the container for "there is
+  something active": uncovered once, covered once, unmoved while the active object
+  changes. The state machine governs the OBJECT, not the panel. Exactly one visible copy
+  of the active object at any moment; the plane stays interactive on the other half — no
+  overlay, no focus trap. Escape closes; focus returns to the originating button.
+  Programmatic `.focus()` fires `:focus-visible` in Chrome, so object buttons need
+  `outline: none` + a deliberate `:focus-visible` ring.
 
 ## Grid view (step 5)
 
@@ -89,6 +90,181 @@ idle`; exactly one visible copy of the active object at any moment. `Flip` moves
   label would have broken every existing consumer's `labels` object.
 - `reducedMotion: 'grid'` locks only when the visitor prefers reduced motion;
   `viewLocked` on the API tells chrome to hide the toggle and the zoom (all no-ops).
+
+## Detail flight (step 6)
+
+- **Two decoupled lifecycles in `src/detail/machine.ts` (PURE).** The PANEL:
+  `closed → open → covering → closed`, uncovered ONCE and covered ONCE and still in
+  between. The OBJECT (the machine's `flight`): `waiting → in → shown → out`. Coupling
+  them was the characteristic bug — switching A→B re-covered and re-revealed the panel;
+  now `open → open` never leaves `panel: 'open'`. `activeCopy(state)` is the ONE place
+  that decides which copy of the active object shows (`plane` while waiting/home,
+  `flight` while in/out, `panel` while shown); the hidden `Set` (`hiddenInstancesOf`),
+  the slot's visibility and both visuals' visibility all derive from it in one commit.
+- **Open and close are EXACT MIRRORS, and both keep the object above the panel the whole
+  time.** The object's five phases pair up around the panel wipe:
+
+  | | open | close |
+  |---|---|---|
+  | park above panel | `waiting` — over the ORIGIN, while the panel REVEALS | `leaving` — over the SLOT, while the panel COVERS |
+  | signal that releases it | `revealed` (after the reveal wipe) | `coverDone` (after the cover wipe) |
+  | fly | `in` — origin → slot | `out` — slot → origin |
+  | end | `landed` → `shown` | `landed` → `closed` |
+
+  So on **open**: the object is lifted onto the flight layer AT the click (parked over its
+  origin, above the panel), the panel wipes open behind it, THEN it flies into the slot.
+  On **close** it is the reverse: the object lifts off the slot onto the flight layer
+  (parked, above the panel), the panel wipes CLOSED behind it, THEN it flies home to the
+  plane and only there loses its z. This is the fix for "on close the object dropped back
+  first and lost its z before the panel left" — the close now rewinds the open exactly.
+  The whole float+fly is sequenced by the machine (the panel-lifecycle effect fires
+  `revealed`/`coverDone` off the wipe's own duration), never by a CSS `animation-delay`.
+- **During `leaving`/`out` the panel STAYS `covering`.** `close` from `shown` goes to
+  `covering` + `leaving` at once (the panel is already animating closed while the object
+  floats); `coverDone` moves `leaving` → `out` but KEEPS `panel: 'covering'` (it will not
+  re-run the wipe — the attribute did not change) so `Detail` and the flight visual stay
+  mounted for the trip home; `landed` from `out` is what finally reaches `closed`.
+  `activeEntity` (hence the whole `Detail` subtree + body portal) is mounted as long as
+  `active !== null`, which holds through `out`, so the flight visual never unmounts
+  mid-flight.
+- **`activeCopy` is driven by the flight phase, so the object holds the flight layer at
+  both ends.** `waiting` (first open, has origin, no relay) → `flight`; `in`/`leaving`/
+  `out` → `flight`; `shown` → `panel`; a serialize relay's `waiting` stays `plane` (it
+  genuinely sits on the plane until the outgoing flies home). The parked clone (a
+  `gsap.set` at the origin or slot box, IDENTITY transform, no tween) replaces the hidden
+  plane instance — one copy visible throughout, and it is always the one above the panel.
+- **The body portal is owned by the orchestrator (`portalReady`), NOT by `Detail`.** The
+  orchestrator never unmounts, so the flag flips true once and stays; `Detail` mounts and
+  unmounts with the active item, so a flag there would reset to false on every open and
+  the flight layer would arrive a frame after the click — the parked clone would have
+  nowhere to render and the object would flash behind the panel. `Detail` receives it as
+  a prop; the flight effect keys on it so the park re-runs the instant the portal exists.
+- **The body portal is owned by the orchestrator (`portalReady`), NOT by `Detail`.** The
+  orchestrator never unmounts, so the flag flips true once and stays; `Detail` mounts and
+  unmounts with the active item, so a flag there would reset to false on every open and
+  the flight layer would arrive a frame after the click — the parked clone would have
+  nowhere to render and the object would flash behind the panel. `Detail` receives it as
+  a prop; the flight effect keys on it so the park re-runs the instant the portal exists.
+- **Landing is a React commit, not a `gsap.set` in `onComplete`.** `onComplete` only
+  dispatches; the commit that shows the slot (or un-hides the instance) is the one whose
+  effect cleanup reverts the flight context — no blank frame.
+- **FLIP by hand, not `Flip.fit`:** two `getBoundingClientRect`s, the box set ONCE to
+  the destination's, one tween on x/y/scaleX/scaleY (no layout per frame). `Flip.fit`
+  goes through `getGlobalMatrix` and does not run under jsdom, where the geometry is
+  tested. Both the active flight and the relay use the same `flyVisual`.
+- **React owns `visibility`; GSAP owns opacity/scale/pointer-events.** Neither writes the
+  other's, so the reveal context's `revert()` and the hidden origin never collide.
+- **Focus returns in a layout effect of the commit the panel closes in** — the same
+  commit un-hides the origin, and a `visibility: hidden` element takes no focus. Exact
+  instance from the root's registry (never a selector by entity prefix), `preventScroll`
+  (the button lives in the `overflow: hidden` viewport), fallback to the root
+  (`tabIndex={-1}`) when there is no origin. Focus moves INTO the panel only on the
+  closed → open uncover, never on mount (`defaultActiveId` must not steal focus) and
+  never on a relay.
+- **The click's origin for a controlled `activeId` waits in a ref read during render and
+  never cleared there:** StrictMode renders twice; cleared in a layout effect.
+- **Draggable swallows the click that follows a drag** (`suppressClickOnDrag`), so an
+  object's `onClick` fires only for real clicks; `minimumMovement: 5` separates the two.
+- **Stacking scale — tokens in `base.css`, no bare z-index in any component:**
+  `--vitrina-z-plane` 10, `--vitrina-z-panel` 40, `--vitrina-z-flight` 50 (gaps for
+  consumer chrome above the flight). Who gets which:
+  - `--vitrina-z-plane` on the plane VIEWPORT and the grid ROOT — one rung for the whole
+    object layer, EVERY object including the active one. The z-index there makes the
+    viewport a stacking context, so a dragged object passing under the panel ducks
+    behind it. **No object ever carries its own z-index**: the active one is hidden
+    (`visibility: hidden`) while its clone flies, never raised a layer.
+  - `--vitrina-z-panel` on the panel layer.
+  - `--vitrina-z-flight` on BOTH flight layers (active clone AND relay) — above the panel
+    in EVERY state, so the flying object never ducks behind a panel still revealing and
+    then jumps forward when the wipe ends.
+- **The flight layers are PORTALLED to `document.body` (`createPortal`), and this is
+  STRUCTURAL, not a z-index tweak.** The plane's two transform layers (zoom + pan) each
+  establish a stacking context AND, being transformed, become the *containing block* of
+  any `position: fixed` descendant. A flight layer rendered inside the Vitrina root
+  therefore resolves `fixed` against a transformed ancestor and competes inside a context
+  the panel already outranks — no static z-index can climb out of that. Rendered on
+  `body`, outside the root and every transformed ancestor, the flight is a sibling of the
+  whole widget: `fixed` resolves against the viewport again.
+- **`--vitrina-z-flight` goes on the PORTAL WRAPPER, not on the inner flight layers** —
+  this is the node that actually competes against the panel, and getting it wrong put the
+  flight *behind* the panel. Why: the panel layer (z = `--vitrina-z-panel`) lives inside
+  the root, which is `position: relative` with NO z-index and so creates NO stacking
+  context, so the panel emerges into the document's ROOT context at level 40. The portal
+  wrapper is `position: fixed` (which always makes a stacking context) on `body`; left at
+  `z-index: auto` it joins the root context at level 0 and — by paint order — LOSES to
+  the panel's positive z, and a `z-index: 50` on an inner layer can't help because a child
+  never escapes its parent's level. So both competitors must sit in the same root context
+  and the WRAPPER must carry the higher token: panel 40 < wrapper 50 → the object wins
+  from the first frame, before the panel finishes revealing. (Keep the root free of any
+  stacking-context trigger — `transform`, `filter`, a `z-index` — or the panel would be
+  trapped in the root's context while the portal stayed in body's, and the comparison
+  breaks.) The inner flight/relay layers and the flying visuals carry NO z-index, so the
+  order also never rides on the momentary z GSAP's Flip stamps during a flip and strips at
+  the end.
+  - **SSR-safe:** the portal mounts only after the first client effect (a `mounted` flag
+    set in `useIsomorphicLayoutEffect`), and renders nothing on the server or the first
+    paint. SSR emits the panel alone (inert markup; there is no flight without an
+    interaction), and hydration stays in step because the portal is added after the first
+    commit, not during render. Verified: `renderToString` emits no `data-vitrina-flight*`,
+    and a hydrate of a `defaultActiveId` tree logs zero mismatch warnings.
+  - The portal wrapper is stamped `data-vitrina-root` so the stacking tokens and any
+    theme custom properties (all scoped to `[data-vitrina-root]`) resolve on `body` too.
+- The panel layer stays INSIDE the root; only the flight escapes. All layers are
+  `pointer-events: none` except the panel (`auto`): a `pointer-events: none` layer does
+  not hand the hit-test to what paints beneath. No overlay — darkening the other half
+  eats the pointerdown that starts a drag.
+- **Before blaming the stacking, confirm the object ARRIVES.** The Flip destination is the
+  slot's measured rect; if the panel opens with no object inside, the bug is the
+  destination (a zero/absent slot rect), not the layer. The DOM test lands a flight and
+  asserts `slot` ends visible with the object's content and the flight visual hidden.
+- The shell renders no close button: `ctx.close()` is the consumer's, Escape is the
+  library's. `labels.closeDetail` is for the consumer's control and `<VitrinaControls>`.
+
+### Open collision (`openCollision` prop) — how ONE object is relayed for the next
+
+- Only relevant INSIDE an already-open panel; the panel itself never moves. `relaying`
+  is the previous object flying home, always a DIFFERENT entity from the active one, so
+  no frame shows two copies of one object.
+  - **`serialize`** (default): the outgoing flies home FIRST (`relayLanded`), then the
+    new one — which sat `waiting` on the plane, still visible there — flies in. One
+    object in flight at a time. A third click replaces the queued one (`state.queued`,
+    holds one, never stacks); the object that was only ever waiting stays on the plane.
+  - **`crossfade`**: the incoming flies `in` and the outgoing `relays` home AT ONCE, two
+    layers. A crossfade only starts from a settled `shown`; opening while still
+    flying/relaying parks in `queued` and `drain`s once the slot is clean (relay gone
+    AND the active object `shown`).
+- The panel's TEXT content crosses on its own: `active` flips to the new entity the
+  instant a relay starts, and the content is rendered for `active` and **never keyed by
+  id** — a remount would kill any crossfade the consumer runs on the text (the old would
+  vanish in the same commit the new arrives). Reset internal state by deriving it from
+  the id during render, not with `key`.
+- If the panel's height differs between objects, the card's height is TWEENED (measured
+  after the content commit, from a ref that survives commits), so it does not jump.
+- The plane/grid hide a `Set` of instances (`hiddenInstancesOf`): the active one and the
+  relaying one at once.
+
+### Panel entrance (§ the card)
+
+- The card is not slid in, it is uncovered: a `clip-path` wipe from the seam,
+  `inset(0 0 0 100%) → inset(0)`. Three nested boxes — panel layer, panel wrapper, card
+  — because the mask and the scroll BOTH live on the card, never the wrapper: a
+  `clip-path` on the wrapper would cut a sticking-out sibling (a close button over the
+  seam) into a crescent, and declaring `overflow-y` couples `overflow-x` to `auto` and
+  clips whatever sticks out. Any such chrome is a sibling of the card, inside the wrapper.
+- The wipe is CSS keyframes (runs on the commit the card mounts), keyed on
+  `data-vitrina-panel-anim` (`reveal`/`cover`/`none`) — set from the PANEL phase, `none`
+  on every relay, so switching the active object never re-wipes.
+- `src/styles/base.css` exists from this step: the focus rules (native ring suppressed
+  with `outline: 2px solid transparent` — `none` vanishes under forced colours too — and
+  drawn back on `:focus-visible`, because a programmatic `.focus()` matches it in
+  Chrome; both in the stylesheet, an inline `outline: none` would beat the ring), the
+  panel wipe keyframes, and the custom properties — the stacking scale
+  (`--vitrina-z-plane/panel/flight`) and the motion tokens.
+- **All durations/curves come from CSS variables** — `--vitrina-dur-flight`,
+  `--vitrina-dur-panel`, the two eases — read at runtime (`readSeconds`) with the
+  `defaults.ts` constants as the SSR/jsdom fallback only. No animation numbers in the
+  component. Setting `--vitrina-dur-flight` to 2s in devtools plays the whole
+  choreography in deliberate slow motion.
 
 ## GSAP lifecycle gotchas (§6.7)
 
@@ -211,6 +387,27 @@ re-emits a revealed id). `staggerDelays` starts at 0 with seeded gaps in [30, 80
   `renderObject`'s, both overflow axes), controlled/uncontrolled toggle, the `'grid'` lock,
   and the round trip: pan and revealed set identical on return, `isRevealed` true from the
   first render back, cards paired by exact shown instance id.
+- **Machine test** (`tests/machine.test.ts`, pure): every transition pinned, no-ops return
+  the same reference, the panel never re-covers on a swap, the full arc is symmetric
+  (`waiting→in→shown` on open mirrored by `leaving→out` on close, the panel `covering`
+  across both close phases), and a 20 000-step seeded random walk per collision mode
+  asserts the invariant on every reachable state.
+- **Detail DOM test** (`tests/detail.test.tsx`): the panel reveals once and covers once
+  across A→B→C (the decoupling), the open/close MIRROR (Escape covers the panel FIRST with
+  the clone floating above it, THEN the object flies home and lands on the plane — not the
+  reverse), one visible copy at every step, the flight's measured
+  geometry on the fixed visual, the shell (dialog named by `objectLabel`, no text beyond
+  `renderDetail`'s, pointer-events on the layers, scroll+mask on the card not the
+  wrapper), the flight portal (on `document.body`, out of the root, `fixed`, removed on
+  unmount) and the stacking scale (plane < panel < flight, the flight token on the PORTAL
+  WRAPPER — the node that competes against the panel — with the inner layers, flying
+  visuals and plane objects all carrying none), Escape + focus back on the EXACT origin,
+  reduced motion, controlled
+  `activeId`, `openDetail`/next/prev, view change (`detach`), entity removal (`abandon`),
+  and both collision modes end to end (A, B, then C mid-sequence → C open, A and B back).
+  Motion is hand-driven: `landTimeline()` fires whatever is due on the global timeline
+  (the panel's reveal/cover `delayedCall`s live there too), `landUntilSettled` runs to
+  rest.
 - **Reveal/tab-order DOM test** (`tests/reveal-dom.test.tsx`): the DOM is checked against
   `framePass`'s own prediction at every zoom step — never against hand-picked counts,
   which depend on where 9 objects happen to fall. Motion timing is driven by hand:
@@ -248,10 +445,34 @@ packages/vitrina test|typecheck|build`.
 - [ ] 5. Grid view + Flip toggle — code complete, gate green (`tests/view.test.tsx`,
      teardown across repeated toggles); the flight itself needs the real-browser check
      (the playground has no toggle by design — the demo's controls will)
-- [ ] 6. Detail panel + flight state machine
+- [ ] 6. Detail panel + object state machine, panel/object lifecycles DECOUPLED
+     (panel uncovers once, covers once, holds still across object swaps), configurable
+     open collision (serialize/crossfade), panel entrance wipe, between-objects height
+     tween — code complete, gate green (`tests/machine.test.ts`, `tests/detail.test.tsx`
+     incl. both collision modes and the reveal-once/cover-once check, teardown extended
+     with open/close/relay/unmount-mid-flight); the flight, serialize vs crossfade feel,
+     the wipe choreography (`--vitrina-dur-flight` at 2s for slow motion), the height
+     tween, the panel beside a live plane and the focus ring need the real-browser check
+     (the playground has a `renderDetail` with varying height and a collision toggle).
+     Stacking (now that the flight portals to `body`), with `--vitrina-dur-flight` at 2s:
+     first confirm the object ARRIVES — the flying copy ends in the panel slot, visible,
+     opacity 1 (if the panel opens empty the bug is the Flip destination, not the layer;
+     jsdom probe confirms arrival, but the real browser is the check). Then: the flying
+     object stays ABOVE the panel from the first frame to the last — open, close, and the
+     A→B relay. Watch the OPEN/CLOSE MIRROR: on open the object is above the panel from the
+     click and the panel reveals behind it, then it flies in; on CLOSE the panel must cover
+     FIRST with the object still floating above it, and only after the panel is gone does
+     the object fly home to the plane and lose its z — the close is the open rewound, never
+     "object drops back first, then the panel leaves". And with the panel open, dragging
+     the plane so an object passes under the panel, that object goes BEHIND it (this is what
+     distinguishes "the flight layer is right" from "every object rose"). One visible copy
+     of the active object throughout.
+     **Reconsider whether crossfade still earns its place:** with the panel now still,
+     serialize may feel complete on its own — a real-browser call, per the prompt.
 - [ ] 7. Themes, `base.css`, `<VitrinaControls>`, reduced-motion paths
-     (note: `package.json` exports already reference `dist/*.css` — the build must copy
-     styles from step 7 on, and `npm pack` is not truthful until then)
+     (note: `package.json` exports already reference `dist/*.css` — `base.css` exists
+     since step 6 with the focus rules only and the build copies it; the themes do not,
+     so `npm pack` is not truthful until then)
 - [ ] 8. Build config, exports map, SSR test, README; `npm pack` → install tarball into
      scratch Vite app **before** writing the demo
 - [ ] 9. `apps/demo` (Vite + React + TS, void theme, minerals + emoji datasets)

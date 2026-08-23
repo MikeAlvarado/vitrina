@@ -62,6 +62,23 @@ export interface VitrinaLayout {
 
 export type VitrinaView = 'plane' | 'grid';
 
+/**
+ * The detail flight, as the explicit state machine it is:
+ * `idle → opening → open → closing → idle`. Exactly one copy of the active
+ * object is visible in every phase — on the plane, in flight, or in the panel.
+ */
+export type VitrinaDetailPhase = 'idle' | 'opening' | 'open' | 'closing';
+
+/**
+ * What happens when an object is opened while another is already open.
+ * - 'serialize' (default): the current object flies back, then the new one flies
+ *   in. Exactly one copy visible at every moment — the machine's invariant intact.
+ * - 'crossfade': the current object dissolves in the panel while the new one flies
+ *   in. Faster; the two that animate are always different entities, so no frame
+ *   ever shows two copies of the same object.
+ */
+export type VitrinaOpenCollision = 'serialize' | 'crossfade';
+
 export interface VitrinaObjectContext {
   instanceId: string;
   isActive: boolean;
@@ -118,6 +135,16 @@ export interface VitrinaApi {
    * zoom transitions are no-ops. Chrome should hide the toggle and the zoom.
    */
   viewLocked: boolean;
+  /** The entity in the detail panel, or null. Mirrors the `activeId` prop when controlled. */
+  activeId: string | null;
+  detailPhase: VitrinaDetailPhase;
+  /**
+   * Opens an entity's detail. With `instanceId` — the instance the object flies
+   * from and returns to, and where focus goes back on close — it is what a click
+   * on that instance does. Without one there is no flight: the panel just opens.
+   */
+  openDetail(entityId: string, instanceId?: string | null): void;
+  closeDetail(): void;
 }
 
 export interface VitrinaProps {
@@ -130,13 +157,21 @@ export interface VitrinaProps {
   /** The object itself. Called once per instance. Must be pure and cheap. */
   renderObject: (entity: VitrinaEntity, ctx: VitrinaObjectContext) => ReactNode;
 
-  /** The contents of the detail panel. The library owns the panel shell and the flight. */
+  /**
+   * The contents of the detail panel. The library owns the panel shell and the
+   * flight — and the slot the object lands in, drawn with `renderObject` — and
+   * renders nothing else inside: no close button, no copy. `ctx.close()` is how
+   * the consumer's own close control works; Escape always does.
+   */
   renderDetail?: (entity: VitrinaEntity, ctx: VitrinaDetailContext) => ReactNode;
 
   /** Controlled active item. Omit for uncontrolled. */
   activeId?: string | null;
   defaultActiveId?: string | null;
   onActiveChange?: (id: string | null) => void;
+
+  /** How opening an object while another is open behaves. Defaults to 'serialize'. */
+  openCollision?: VitrinaOpenCollision;
 
   /** Controlled view. Omit for uncontrolled. */
   view?: VitrinaView;

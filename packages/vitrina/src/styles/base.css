@@ -1,0 +1,111 @@
+/*
+ * vitrina — base stylesheet. Step 6 ships the focus rules and the panel's own
+ * entrance; the rest (cursor states, theme colours) lands in step 7.
+ *
+ * Motion custom properties, the single source of truth for the choreography —
+ * the panel wipe (below) and the object flights (GSAP, which reads these at
+ * runtime) share the same numbers, so no duration is hard-coded in a component.
+ * A theme, or devtools, may retune them: `--vitrina-dur-flight` at 2s plays the
+ * whole sequence in deliberate slow motion.
+ */
+[data-vitrina-root] {
+  /*
+   * Stacking scale. Every layer the library paints places itself here — no bare
+   * z-index in a component. Three rungs, gaps left for consumer chrome:
+   *   plane  — the plane/grid object layer: EVERY object, the active one
+   *            included. Nothing rises per-object; the active object is hidden
+   *            (visibility) while its clone flies, it never changes layer.
+   *   panel  — the detail panel container.
+   *   flight — the flying object(s): the active clone, and the relay flying home.
+   *            ABOVE the panel in every state, so the object never ducks behind
+   *            the panel mid-flight. A stable rung — never Flip's momentary
+   *            during-flip z boost, which is why the flying object lives on its
+   *            own sibling layer rather than borrowing the panel's or an object's.
+   * Consumer chrome that must sit over the panel takes a value above --vitrina-z-flight.
+   */
+  --vitrina-z-plane: 10;
+  --vitrina-z-panel: 40;
+  --vitrina-z-flight: 50;
+
+  --vitrina-dur-flight: 0.6s;
+  --vitrina-dur-panel: 0.45s;
+  /* Entrance and its mirror: the close reads as a rewind, not a hurried exit. */
+  --vitrina-panel-ease-in: cubic-bezier(0.22, 1, 0.36, 1);
+  --vitrina-panel-ease-out: cubic-bezier(0.64, 0, 0.78, 0);
+}
+
+/*
+ * Focus rings. Closing the detail returns focus to the object it opened from
+ * with a programmatic `.focus()`, and in Chrome a programmatic focus matches
+ * `:focus-visible` even after a mouse click — so the native ring would appear on
+ * the object under the pointer every time a panel closes. The ring is therefore
+ * suppressed on the button and drawn back deliberately on `:focus-visible`.
+ *
+ * `outline: 2px solid transparent` rather than `outline: none`: a transparent
+ * outline still renders under forced colours (Windows high contrast), where
+ * `none` would leave keyboard users with nothing.
+ */
+[data-vitrina-object] {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+[data-vitrina-object]:focus-visible {
+  outline-color: var(--vitrina-focus, currentColor);
+}
+
+/*
+ * The panel container: uncovered ONCE, covered ONCE, still in between. The card
+ * is not slid in, it is uncovered — a clip-path wipe from the seam outward. The
+ * mask lives on the CARD, never the wrapper: the wrapper holds any chrome that
+ * sticks out past the panel edge, and a clip-path there would cut it into a
+ * crescent.
+ *
+ * `data-vitrina-panel-anim`, set by the orchestrator from the PANEL phase (not
+ * the object's), plays the wipe: `none` on every relay, so switching the active
+ * object never re-wipes. Keyframes (not a transition) so the entrance runs on the
+ * very commit the card mounts, with nothing to transition from.
+ *
+ * The object choreography is sequenced by the machine, not by CSS delays: on a
+ * first open the object WAITS on the plane until the reveal wipe's own duration
+ * elapses (the orchestrator's `revealed` signal), then flies into a card that has
+ * stopped growing; on close the object flies home first and only then does the
+ * panel cover. The exit is the exact inverse of the entrance: same duration,
+ * mirrored curve.
+ */
+[data-vitrina-panel-card] {
+  clip-path: inset(0);
+}
+
+[data-vitrina-panel][data-vitrina-panel-anim='reveal'] [data-vitrina-panel-card] {
+  animation: vitrina-panel-reveal var(--vitrina-dur-panel) var(--vitrina-panel-ease-in) both;
+}
+
+[data-vitrina-panel][data-vitrina-panel-anim='cover'] [data-vitrina-panel-card] {
+  animation: vitrina-panel-cover var(--vitrina-dur-panel) var(--vitrina-panel-ease-out) both;
+}
+
+@keyframes vitrina-panel-reveal {
+  from {
+    clip-path: inset(0 0 0 100%);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+
+@keyframes vitrina-panel-cover {
+  from {
+    clip-path: inset(0);
+  }
+  to {
+    clip-path: inset(0 0 0 100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-vitrina-panel][data-vitrina-panel-anim] [data-vitrina-panel-card] {
+    animation: none;
+    clip-path: inset(0);
+  }
+}

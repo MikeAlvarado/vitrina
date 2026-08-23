@@ -8,6 +8,8 @@ export type {
   VitrinaInstance,
   VitrinaLayout,
   VitrinaView,
+  VitrinaDetailPhase,
+  VitrinaOpenCollision,
   VitrinaObjectContext,
   VitrinaDetailContext,
   VitrinaLabels,
