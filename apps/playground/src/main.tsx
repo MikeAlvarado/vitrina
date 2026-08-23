@@ -90,14 +90,17 @@ function App() {
         // The panel is a shell: everything below is the playground's, including the
         // close button (the library renders no buttons; Escape works regardless).
         // The body length varies by entity so the panel's between-objects HEIGHT
-        // tween is visible when stepping ← / → without closing.
+        // tween is visible when stepping ← / → without closing. Each block is
+        // marked data-vitrina-line: the library staggers them in after the wipe
+        // (alongside the flight), re-arms them on ← / →, and staggers them out —
+        // tighter, last first — on close.
         renderDetail={(entity, ctx) => (
           <div style={{ padding: 24, display: 'grid', gap: 12 }}>
-            <strong>{entity.id}</strong>
-            <p style={{ margin: 0, opacity: 0.7, lineHeight: 1.5 }}>
+            <strong data-vitrina-line="">{entity.id}</strong>
+            <p data-vitrina-line="" style={{ margin: 0, opacity: 0.7, lineHeight: 1.5 }}>
               {`${entity.id} `.repeat(4 + (entity.id.length % 5) * 8)}
             </p>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div data-vitrina-line="" style={{ display: 'flex', gap: 8 }}>
               <button type="button" onClick={ctx.prev}>
                 ←
               </button>

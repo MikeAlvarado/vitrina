@@ -261,10 +261,58 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
   panel wipe keyframes, and the custom properties — the stacking scale
   (`--vitrina-z-plane/panel/flight`) and the motion tokens.
 - **All durations/curves come from CSS variables** — `--vitrina-dur-flight`,
-  `--vitrina-dur-panel`, the two eases — read at runtime (`readSeconds`) with the
-  `defaults.ts` constants as the SSR/jsdom fallback only. No animation numbers in the
-  component. Setting `--vitrina-dur-flight` to 2s in devtools plays the whole
-  choreography in deliberate slow motion.
+  `--vitrina-dur-panel`, the line staggers, the two eases — read at runtime
+  (`readSeconds`) with the `defaults.ts` constants as the SSR/jsdom fallback only. No
+  animation numbers in the component. Setting `--vitrina-dur-flight` to 2s in devtools
+  plays the whole choreography in deliberate slow motion.
+- Two things on the card's CSS are load-bearing, not styling: `scrollbar-gutter:
+  stable` (with a classic scrollbar the width is reserved only once the content needs
+  it; if the height crosses that threshold MID-ANIMATION the scrollbar appears and
+  shoves the content horizontally — it reads as text moving with no tween on it) and an
+  explicit `overflow-x: hidden` (declaring only Y leaves X a valid scroll container,
+  and any native scroll-into-view on a descendant hands it a real `scrollLeft` that
+  shifts the whole card).
+
+### Content lines (`data-vitrina-line`) — the panel content's entrance
+
+- The content is `renderDetail`'s, so the library cannot animate nodes whose structure
+  it does not know. It animates the panel descendants carrying `data-vitrina-line`
+  (querySelectorAll in the panel scope, document order). None marked → no content
+  animation, nothing breaks. Documented in the README; the playground marks its blocks.
+- **Two GSAP contexts, not one.** The panel's arrival (and any chrome lines that enter
+  with it) depends only on open/close — it lives in the panel-lifecycle effect. The
+  content depends ALSO on the active id, because it re-arms on an A→B swap without
+  closing — its own effect, scoped to `[data-vitrina-detail-content]`. With one
+  dependency list, switching objects would replay the panel's own entrance with the
+  panel already open.
+- **Open choreography:** the card is uncovered → the lines enter staggered → the object
+  flies in. The stagger runs WITH the flight (both are released by the wipe's
+  duration), never after it — text waiting for the landing makes the opening feel twice
+  as long. Each line: opacity + a short rise (`DETAIL_LINE_SHIFT`). The step is
+  `--vitrina-stagger-line`; starts are multiples of that step, never loose numbers.
+- **`lazy: false` on the from/fromTo tweens.** Without it GSAP defers the initial state
+  to the end of the tick and the content paints one frame at full opacity before
+  entering. This is also what makes the relay swap clean: the incoming lines are held
+  at 0 in the very commit the text flips.
+- **Close:** same properties, same durations, mirror curve, inverted stagger
+  (`from: 'end'`) — and TIGHTER: its step is its own variable,
+  `--vitrina-stagger-line-exit` (~40 ms against the entrance's ~70). On the way in the
+  stagger paces the reading in order; on the way out there is nothing to read and its
+  only job is avoiding the flat blink — an equally long step leaves the close feeling
+  undecided. Exit starts are multiples of the exit step.
+- **The unmount derives from the REAL exit duration** — `coverDone` fires at
+  max(wipe, last line's start + its duration), computed from the lines actually found
+  and the live token values, never a second constant that must agree by hand: two such
+  numbers desynchronise the moment someone retunes a token, and the symptom is a close
+  cut off mid-animation with no console error.
+- On a relay the panel does not move but the content crosses: the old leaves with the
+  commit, the new staggers in from 0. Never remount with `key={id}` — a remount kills
+  any crossfade the consumer runs and the old vanishes in the same commit the new
+  arrives; the re-arm derives from the id. `overwrite: 'auto'` on the re-arm kills a
+  first-open entrance still mid-stagger on the same nodes.
+- A panel MOUNTED already open (`defaultActiveId`, controlled id on hydrate) plays no
+  entrance — `prevPanelRef` starts at the mount phase, not `'closed'`; animating there
+  would flash server-rendered content out and back in.
 
 ## GSAP lifecycle gotchas (§6.7)
 
@@ -405,6 +453,10 @@ re-emits a revealed id). `staggerDelays` starts at 0 with seeded gaps in [30, 80
   reduced motion, controlled
   `activeId`, `openDetail`/next/prev, view change (`detach`), entity removal (`abandon`),
   and both collision modes end to end (A, B, then C mid-sequence → C open, A and B back).
+  Content lines: held at 0 from the click's commit (`lazy: false`), released after the
+  wipe at multiples of the step alongside the flight, re-armed on a relay without a
+  re-wipe, exit inverted and gating `coverDone` at the real exit total, inert under
+  reduced motion and with no lines marked.
   Motion is hand-driven: `landTimeline()` fires whatever is due on the global timeline
   (the panel's reveal/cover `delayedCall`s live there too), `landUntilSettled` runs to
   rest.
@@ -467,6 +519,13 @@ packages/vitrina test|typecheck|build`.
      the plane so an object passes under the panel, that object goes BEHIND it (this is what
      distinguishes "the flight layer is right" from "every object rose"). One visible copy
      of the active object throughout.
+     Content lines, with `--vitrina-dur-flight` at 2s: card first, lines staggered in
+     (~70 ms steps), object arriving in parallel — never text waiting for the landing;
+     the close staggered out tighter (~40 ms), last line first, and NOT cut off
+     mid-animation (the unmount derives from the exit total); ← / → re-arms the lines
+     with no re-wipe; with no `data-vitrina-line` at all the panel still opens fine.
+     Tab between the panel's elements: nothing may shift horizontally (scrollbar-gutter
+     + overflow-x on the card).
      **Reconsider whether crossfade still earns its place:** with the panel now still,
      serialize may feel complete on its own — a real-browser call, per the prompt.
 - [ ] 7. Themes, `base.css`, `<VitrinaControls>`, reduced-motion paths

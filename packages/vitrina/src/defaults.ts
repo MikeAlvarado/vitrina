@@ -104,3 +104,22 @@ export const DETAIL_PANEL_SECONDS = 0.45;
  */
 export const DETAIL_FLIGHT_DURATION_VAR = '--vitrina-dur-flight';
 export const DETAIL_PANEL_DURATION_VAR = '--vitrina-dur-panel';
+
+/*
+ * Content lines. The library cannot animate `renderDetail`'s markup — it does
+ * not know its structure — so the consumer marks the blocks to choreograph with
+ * `data-vitrina-line` (none marked → no content animation). Each line enters on
+ * opacity plus a short rise, starts at multiples of the stagger step. The
+ * entrance step paces the reading in order; the exit has nothing to read — its
+ * only job is avoiding a flat blink — so its step is tighter, under its own
+ * variable. Steps are CSS custom properties (a theme retunes them); the
+ * constants are the SSR/jsdom fallbacks. Each line's own duration and the
+ * mirrored eases ride on the panel's (`--vitrina-dur-panel`).
+ */
+export const DETAIL_LINE_SHIFT = 12;
+export const DETAIL_LINE_EASE = 'power3.out';
+export const DETAIL_LINE_EXIT_EASE = 'power3.in';
+export const DETAIL_LINE_STAGGER_SECONDS = 0.07;
+export const DETAIL_LINE_STAGGER_EXIT_SECONDS = 0.04;
+export const DETAIL_LINE_STAGGER_VAR = '--vitrina-stagger-line';
+export const DETAIL_LINE_STAGGER_EXIT_VAR = '--vitrina-stagger-line-exit';

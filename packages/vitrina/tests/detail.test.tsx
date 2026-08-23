@@ -25,6 +25,7 @@ import { gsap } from 'gsap';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { VitrinaDetailContext, VitrinaObjectContext } from '../src';
+import { DETAIL_LINE_STAGGER_EXIT_SECONDS, DETAIL_PANEL_SECONDS } from '../src/defaults';
 import {
   Probe,
   SLOT,
@@ -561,6 +562,141 @@ describe('the API and the consumer', () => {
     expect(detailOf(host).layer).toBeNull();
     expect(hiddenObjectsOf(host)).toHaveLength(0);
 
+    await act(async () => root.unmount());
+  });
+});
+
+describe('content lines: data-vitrina-line enters staggered, exits mirrored, gates the unmount', () => {
+  /*
+   * Five marked blocks, so the exit total ((n − 1) × exit step + line duration)
+   * is longer than the wipe alone and the derived unmount is tellable from a
+   * hard-coded one. All timings below are the jsdom fallbacks of the CSS
+   * variables — the same numbers the component reads.
+   */
+  const renderLines = () => (
+    <div>
+      <h3 data-vitrina-line="">a</h3>
+      <p data-vitrina-line="">b</p>
+      <p data-vitrina-line="">c</p>
+      <p data-vitrina-line="">d</p>
+      <p data-vitrina-line="">e</p>
+    </div>
+  );
+  const linesOf = (host: HTMLElement) =>
+    Array.from(host.querySelectorAll<HTMLElement>('[data-vitrina-panel] [data-vitrina-line]'));
+  /** Jumps the global timeline to an ABSOLUTE time — partial advances, unlike landTimeline's +5. */
+  const at = (t: number) => act(() => void gsap.globalTimeline.time(t));
+
+  it('open: lines held at 0 from the click (lazy: false), released after the wipe at multiples of the step, WITH the flight', async () => {
+    const { host, root, revealed } = await mountRevealed({ props: { renderDetail: renderLines } });
+    const origin = revealed[0] as HTMLButtonElement;
+    const t0 = gsap.globalTimeline.time();
+    act(() => origin.click());
+
+    // The from-state lands in the click's own commit — never a frame of settled
+    // text before the entrance.
+    const lines = linesOf(host);
+    expect(lines).toHaveLength(5);
+    for (const line of lines) expect(line.style.opacity).toBe('0');
+
+    // The card uncovers FIRST: while the wipe runs, no line has moved.
+    at(t0 + DETAIL_PANEL_SECONDS - 0.05);
+    for (const line of linesOf(host)) expect(line.style.opacity).toBe('0');
+
+    // Wipe done: the flight is live AND the lines are entering — together, in
+    // document order. Starts at multiples of the step (0.07): at wipe + 0.10 the
+    // third line (start 0.14) has not begun, the first two have, in order.
+    at(t0 + DETAIL_PANEL_SECONDS + 0.1);
+    expect(tweensOn(detailOf(host).flight as Element)).toHaveLength(1);
+    const [l0, l1, l2] = linesOf(host) as [HTMLElement, HTMLElement, HTMLElement];
+    expect(parseFloat(l0.style.opacity)).toBeGreaterThan(parseFloat(l1.style.opacity));
+    expect(parseFloat(l1.style.opacity)).toBeGreaterThan(0);
+    expect(l2.style.opacity).toBe('0');
+
+    landUntilSettled(host);
+    for (const line of linesOf(host)) expect(parseFloat(line.style.opacity)).toBe(1);
+    await act(async () => root.unmount());
+  });
+
+  it('a relay re-arms the content entrance (the second context): no re-wipe, incoming lines from 0 in the swap commit', async () => {
+    const { host, root } = await mountRevealed({ props: { renderDetail: renderLines } });
+    const [a, b] = origins(host);
+    act(() => a.click());
+    landUntilSettled(host);
+    for (const line of linesOf(host)) expect(parseFloat(line.style.opacity)).toBe(1);
+
+    act(() => b.click());
+    // The panel itself does not move — no wipe — but the content re-arms: the
+    // incoming lines are held at 0 in the very commit the text flips.
+    expect(detailOf(host).panelAnim).toBe('none');
+    expect(panelEntity(host)).toBe('e1');
+    for (const line of linesOf(host)) expect(line.style.opacity).toBe('0');
+    landUntilSettled(host);
+    for (const line of linesOf(host)) expect(parseFloat(line.style.opacity)).toBe(1);
+    await act(async () => root.unmount());
+  });
+
+  it('close: exit inverted (last line first, tighter step) and coverDone waits for the REAL exit total, not the wipe', async () => {
+    const { host, root, revealed } = await mountRevealed({ props: { renderDetail: renderLines } });
+    const origin = revealed[0] as HTMLButtonElement;
+    act(() => origin.click());
+    landUntilSettled(host);
+
+    const t0 = gsap.globalTimeline.time();
+    pressEscape();
+    expect(detailOf(host).panelPhase).toBe('covering');
+
+    // Inverted stagger: at +0.10 the LAST line (start 0) is already fading, the
+    // first (start 4 × 0.04 = 0.16) has not started — its style is untouched.
+    at(t0 + 0.1);
+    const lines = linesOf(host);
+    const last = lines[lines.length - 1] as HTMLElement;
+    expect(parseFloat(last.style.opacity)).toBeLessThan(1);
+    const first = lines[0] as HTMLElement;
+    expect(first.style.opacity === '' || parseFloat(first.style.opacity) === 1).toBe(true);
+
+    // The wipe alone (0.45) is NOT what gates the close: the exit's real total is
+    // 4 × 0.04 + 0.45 = 0.61, so past the wipe the object still floats, parked.
+    at(t0 + DETAIL_PANEL_SECONDS + 0.05);
+    expect(detailOf(host).panelPhase).toBe('covering');
+    expect(tweensOn(detailOf(host).flight as Element)).toHaveLength(0);
+
+    // Past the last line's end, coverDone releases the flight home.
+    at(t0 + 4 * DETAIL_LINE_STAGGER_EXIT_SECONDS + DETAIL_PANEL_SECONDS + 0.05);
+    expect(tweensOn(detailOf(host).flight as Element)).toHaveLength(1);
+
+    landUntilSettled(host);
+    expect(detailOf(host).layer).toBeNull();
+    expect(document.activeElement).toBe(origin);
+    await act(async () => root.unmount());
+  });
+
+  it('without any data-vitrina-line the timings collapse to the wipe alone', async () => {
+    const { host, root, revealed } = await mountRevealed();
+    const origin = revealed[0] as HTMLButtonElement;
+    act(() => origin.click());
+    landUntilSettled(host);
+    const t0 = gsap.globalTimeline.time();
+    pressEscape();
+    act(() => void gsap.globalTimeline.time(t0 + DETAIL_PANEL_SECONDS + 0.05));
+    expect(tweensOn(detailOf(host).flight as Element)).toHaveLength(1); // coverDone at the wipe
+    landUntilSettled(host);
+    expect(detailOf(host).layer).toBeNull();
+    await act(async () => root.unmount());
+  });
+
+  it('reduced motion: lines never animate — no held opacity, open and close settle at once', async () => {
+    stubs.prefersReduced = true;
+    const { host, root } = await mountStrict({ props: { renderDetail: renderLines }, children: <Probe /> });
+    const origin = revealedObjectsOf(host)[0] as HTMLButtonElement;
+    act(() => origin.click());
+    expect(currentApi().detailPhase).toBe('open');
+    for (const line of linesOf(host)) {
+      expect(line.style.opacity).toBe('');
+      expect(tweensOn(line)).toHaveLength(0);
+    }
+    pressEscape();
+    expect(detailOf(host).layer).toBeNull(); // no exit total to wait out
     await act(async () => root.unmount());
   });
 });

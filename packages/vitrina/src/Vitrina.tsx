@@ -36,6 +36,13 @@ import {
   DETAIL_FLIGHT_DURATION_VAR,
   DETAIL_FLIGHT_EASE,
   DETAIL_FLIGHT_SECONDS,
+  DETAIL_LINE_EASE,
+  DETAIL_LINE_EXIT_EASE,
+  DETAIL_LINE_SHIFT,
+  DETAIL_LINE_STAGGER_EXIT_SECONDS,
+  DETAIL_LINE_STAGGER_EXIT_VAR,
+  DETAIL_LINE_STAGGER_SECONDS,
+  DETAIL_LINE_STAGGER_VAR,
   DETAIL_PANEL_DURATION_VAR,
   DETAIL_PANEL_EASE,
   DETAIL_PANEL_SECONDS,
@@ -472,42 +479,169 @@ export function Vitrina({
    * OPEN once (closed → open), covers CLOSED once (→ covering), and holds still
    * across every active-object change in between. `revealed` releases a waiting
    * first-open object so it flies into a card that has stopped growing;
-   * `coverDone` unmounts the panel. Both fire from the wipe's own duration (the
-   * CSS variable), so the object choreography stays glued to the panel's without
-   * a number in the component. Reduced motion (no wipe) settles both at once.
+   * `coverDone` unmounts the panel. Both fire from the animations' own durations
+   * (the CSS variables), so the object choreography stays glued to the panel's
+   * without a number in the component. Reduced motion settles both at once.
+   *
+   * The same lifecycle plays the CONTENT'S entrance — the panel descendants the
+   * consumer marked `data-vitrina-line` (querySelectorAll on the panel, document
+   * order; none marked → no content animation and nothing else changes). This is
+   * the FIRST of two GSAP contexts: everything here depends only on open/close,
+   * so a relay never replays the panel's own arrival — the content's re-arm on a
+   * swap is the second context below, keyed on the active id.
+   *
+   * Choreography on open: the card is uncovered FIRST, then the lines enter
+   * staggered — starting when the wipe ends, the same signal that releases the
+   * flight, so the stagger runs WITH the flight, never after it (text waiting
+   * for the object to land makes the opening feel twice as long). `lazy: false`
+   * on the fromTo: without it GSAP defers the initial state to the end of the
+   * tick and the content paints one frame at full opacity before entering.
+   *
+   * On close the exit mirrors it — same properties, same durations, the mirror
+   * curve, the stagger inverted (`from: 'end'`) and tighter — and `coverDone`
+   * fires at the REAL exit total (last start + its duration, against the wipe),
+   * never a second constant that must agree by hand: two such numbers
+   * desynchronise the moment someone retunes a token, and the symptom is a
+   * close cut off mid-animation with no console error.
+   *
+   * `prevPanelRef` starts at the MOUNT phase, not 'closed': a panel mounted
+   * already open (`defaultActiveId`, a controlled id on an SSR hydrate) is
+   * settled markup — playing the entrance there would flash the server-rendered
+   * content out and back in.
    */
   const panelPhase = detail.panel;
-  const prevPanelRef = useRef<PanelPhase>('closed');
+  const prevPanelRef = useRef<PanelPhase>(detail.panel);
   useIsomorphicLayoutEffect(() => {
     const prev = prevPanelRef.current;
     prevPanelRef.current = panelPhase;
     const root = rootRef.current;
-    const seconds = reducedRef.current ? 0 : readSeconds(root, DETAIL_PANEL_DURATION_VAR, DETAIL_PANEL_SECONDS);
+    const reduced = reducedRef.current;
+    const seconds = reduced ? 0 : readSeconds(root, DETAIL_PANEL_DURATION_VAR, DETAIL_PANEL_SECONDS);
+    const lines = reduced ? [] : Array.from(panelRef.current?.querySelectorAll('[data-vitrina-line]') ?? []);
 
     if (panelPhase === 'open' && prev !== 'open') {
       // Uncovered: let the reveal wipe finish, then release the waiting object.
       const release = () => dispatch({ type: 'revealed' });
+      let ctx: gsap.Context | undefined;
+      if (lines.length > 0) {
+        const step = readSeconds(root, DETAIL_LINE_STAGGER_VAR, DETAIL_LINE_STAGGER_SECONDS);
+        // Starts at multiples of the step, all behind the wipe (an open without
+        // one — no origin to fly from — has nothing to wait for).
+        const delay = panelAnimRef.current === 'reveal' ? seconds : 0;
+        ctx = gsap.context(() => {
+          gsap.fromTo(
+            lines,
+            { opacity: 0, y: DETAIL_LINE_SHIFT },
+            {
+              opacity: 1,
+              y: 0,
+              duration: seconds,
+              ease: DETAIL_LINE_EASE,
+              delay,
+              stagger: step,
+              lazy: false,
+            },
+          );
+        }, root ?? undefined);
+      }
       if (seconds === 0) {
         release();
-        return;
+        return () => ctx?.revert();
       }
       const t = gsap.delayedCall(seconds, release);
       return () => {
         t.kill();
+        ctx?.revert();
       };
     }
     if (panelPhase === 'covering') {
       const done = () => dispatch({ type: 'coverDone' });
-      if (seconds === 0) {
-        done();
-        return;
+      let ctx: gsap.Context | undefined;
+      let total = seconds;
+      if (lines.length > 0) {
+        const step = readSeconds(root, DETAIL_LINE_STAGGER_EXIT_VAR, DETAIL_LINE_STAGGER_EXIT_SECONDS);
+        total = Math.max(total, (lines.length - 1) * step + seconds);
+        ctx = gsap.context(() => {
+          gsap.fromTo(
+            lines,
+            { opacity: 1, y: 0 },
+            {
+              opacity: 0,
+              y: DETAIL_LINE_SHIFT,
+              duration: seconds,
+              ease: DETAIL_LINE_EXIT_EASE,
+              stagger: { each: step, from: 'end' },
+              // The lines are already at their start state; forcing it would
+              // stomp anything the consumer set inline.
+              immediateRender: false,
+              lazy: false,
+            },
+          );
+        }, root ?? undefined);
       }
-      const t = gsap.delayedCall(seconds, done);
+      if (total === 0) {
+        done();
+        return () => ctx?.revert();
+      }
+      const t = gsap.delayedCall(total, done);
       return () => {
         t.kill();
+        ctx?.revert();
       };
     }
   }, [panelPhase]);
+
+  /*
+   * The content's re-entrance on a relay — the SECOND GSAP context, deliberately
+   * split from the panel lifecycle's: the panel's arrival (and any chrome lines
+   * that entered with it) depends only on open/close, while the content also
+   * depends on the active id, because it re-arms when the panel jumps from A to
+   * B without closing. With one dependency list, switching objects would replay
+   * the panel's own entrance with the panel already open. Scoped to the content
+   * box, so a line outside it enters once with the panel and never again.
+   *
+   * The re-arm derives from the id during render-to-render comparison — the
+   * content is NEVER remounted with a key (a remount kills any crossfade the
+   * consumer runs; the old would vanish in the same commit the new arrives).
+   * React reuses the nodes, and the fromTo (`lazy: false` again) holds the
+   * incoming lines at opacity 0 in the very commit the text flips: the old
+   * content leaves with the commit, the new staggers in — no frame of the new
+   * text settled at full opacity. `overwrite: 'auto'` kills a first-open
+   * entrance still mid-stagger on these same nodes rather than letting two
+   * tweens write opacity in the same tick.
+   */
+  const contentEntityId = detail.panel === 'open' ? (detail.active?.entityId ?? null) : null;
+  const prevContentEntityRef = useRef(contentEntityId);
+  useIsomorphicLayoutEffect(() => {
+    const prev = prevContentEntityRef.current;
+    prevContentEntityRef.current = contentEntityId;
+    // Only a swap inside an open panel re-arms — never the first open (the panel
+    // lifecycle owns that entrance), never the close, never under reduced motion.
+    if (contentEntityId === null || prev === null || prev === contentEntityId) return;
+    if (reducedRef.current) return;
+    const root = rootRef.current;
+    const content = panelRef.current?.querySelector('[data-vitrina-detail-content]');
+    const lines = content ? Array.from(content.querySelectorAll('[data-vitrina-line]')) : [];
+    if (lines.length === 0) return;
+    const step = readSeconds(root, DETAIL_LINE_STAGGER_VAR, DETAIL_LINE_STAGGER_SECONDS);
+    const seconds = readSeconds(root, DETAIL_PANEL_DURATION_VAR, DETAIL_PANEL_SECONDS);
+    const ctx = gsap.context(() => {
+      gsap.fromTo(
+        lines,
+        { opacity: 0, y: DETAIL_LINE_SHIFT },
+        {
+          opacity: 1,
+          y: 0,
+          duration: seconds,
+          ease: DETAIL_LINE_EASE,
+          stagger: step,
+          lazy: false,
+          overwrite: 'auto',
+        },
+      );
+    }, root ?? undefined);
+    return () => ctx.revert();
+  }, [contentEntityId]);
 
   /*
    * The panel does not JUMP between objects of different height: when the active

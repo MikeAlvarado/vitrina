@@ -32,6 +32,15 @@
   /* Entrance and its mirror: the close reads as a rewind, not a hurried exit. */
   --vitrina-panel-ease-in: cubic-bezier(0.22, 1, 0.36, 1);
   --vitrina-panel-ease-out: cubic-bezier(0.64, 0, 0.78, 0);
+  /*
+   * Content lines (`data-vitrina-line` in the panel): the gap between
+   * consecutive starts. On the way in the stagger paces the reading in order; on
+   * the way out there is nothing to read and its only job is avoiding a flat
+   * blink, so the exit step is tighter — an equally long one would leave the
+   * close feeling undecided — and lives under its own variable.
+   */
+  --vitrina-stagger-line: 0.07s;
+  --vitrina-stagger-line-exit: 0.04s;
 }
 
 /*
