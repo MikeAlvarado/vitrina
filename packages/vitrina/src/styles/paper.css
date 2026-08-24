@@ -41,11 +41,13 @@
 
 /* Every copy of an object casts the same shadow: the plane instance, the grid
    card, the panel's slot copy, and both flying visuals — so nothing changes
-   weight mid-flight. */
+   weight mid-flight. NO surface: the object is a cut-out, and any background
+   would hand the drop-shadow the rectangle instead of the silhouette. */
 [data-vitrina-object],
 [data-vitrina-slot],
 [data-vitrina-flight],
 [data-vitrina-relay] {
+  background: transparent;
   filter: var(--vitrina-object-shadow);
 }
 

@@ -3,6 +3,24 @@
   "version": "0.0.0",
   "description": "A finite, draggable plane of cut-out objects for React — pan with inertia, discrete zoom, staggered reveal, grid view, detail flight.",
   "license": "MIT",
+  "author": "Mike Alvarado",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MikeAlvarado/vitrina.git",
+    "directory": "packages/vitrina"
+  },
+  "homepage": "https://github.com/MikeAlvarado/vitrina#readme",
+  "bugs": "https://github.com/MikeAlvarado/vitrina/issues",
+  "keywords": [
+    "react",
+    "gsap",
+    "draggable",
+    "pan",
+    "zoom",
+    "gallery",
+    "plane",
+    "flip"
+  ],
   "type": "module",
   "sideEffects": [
     "*.css"

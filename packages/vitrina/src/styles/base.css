@@ -85,6 +85,15 @@
   --vitrina-grid-gap: 80px;
   --vitrina-detail-object: 240px;
   --vitrina-panel-width: 50%;
+
+  /*
+   * Text/emoji content. Images fill the object's box on their own (see the
+   * object-content rules below); type cannot infer a size from a box, so this
+   * is the knob. cqmin — every copy of an object is a size container — keeps it
+   * relative to the box's smaller side across the plane, the grid, the panel
+   * slot and the flight, whatever each copy measures.
+   */
+  --vitrina-object-font-size: 60cqmin;
 }
 
 /*
@@ -98,6 +107,11 @@
  */
 [data-vitrina-root] {
   position: relative;
+  /* The widget fills whatever the consumer sizes — the plane's viewport and the
+     grid take 100% of THIS box, so an unsized root is an invisible widget. The
+     host gives the root (or its parent) a real height; the README says so. */
+  width: 100%;
+  height: 100%;
   outline: none;
 }
 
@@ -155,6 +169,11 @@
 [data-vitrina-object],
 [data-vitrina-controls] button {
   display: block;
+  /* Not only background: with `appearance` left auto, some engines still paint
+     the native button surface — an opaque box that hands the theme's
+     drop-shadow the rectangle instead of the cut-out's silhouette. */
+  appearance: none;
+  margin: 0;
   padding: 0;
   border: 0;
   background: transparent;
@@ -301,6 +320,54 @@
   top: 0;
   pointer-events: none;
   transform-origin: 0 0;
+}
+
+/* --- The object's content --------------------------------------------------- */
+
+/*
+ * Every copy of an object — the plane instance, the grid card (the same
+ * button), the panel slot, and both flying visuals — is a READY-SIZED BOX that
+ * centres whatever renderObject returns. The direct child is capped to the box;
+ * an image or inline SVG fills it outright, aspect kept. Each copy is a size
+ * container (its box is always explicit: inline px on the plane, the cell/slot
+ * tokens, the flight's measured rect), so text content can take its size from
+ * the box via --vitrina-object-font-size. NO surface here or in any theme: the
+ * object is a cut-out, and a background would hand the theme's drop-shadow the
+ * rectangle instead of the silhouette.
+ */
+[data-vitrina-object],
+[data-vitrina-slot],
+[data-vitrina-flight],
+[data-vitrina-relay] {
+  display: grid;
+  place-items: center;
+  container-type: size;
+  line-height: 1;
+}
+
+/* Declared on the child, not the container: container-query lengths resolve
+   against the nearest ANCESTOR container — on the copy itself, cqmin would
+   reach past it. Inherited from here by any deeper text. */
+[data-vitrina-object] > *,
+[data-vitrina-slot] > *,
+[data-vitrina-flight] > *,
+[data-vitrina-relay] > * {
+  max-width: 100%;
+  max-height: 100%;
+  font-size: var(--vitrina-object-font-size);
+}
+
+[data-vitrina-object] > img,
+[data-vitrina-object] > svg,
+[data-vitrina-slot] > img,
+[data-vitrina-slot] > svg,
+[data-vitrina-flight] > img,
+[data-vitrina-flight] > svg,
+[data-vitrina-relay] > img,
+[data-vitrina-relay] > svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 /* --- The panel wipe -------------------------------------------------------- */

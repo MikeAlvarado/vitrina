@@ -604,8 +604,17 @@ packages/vitrina test|typecheck|build`.
      only on the views — otherwise chrome inside the root inherits the page's), pan
      layer at `will-change: auto` at rest, viewport `cursor: grab` + `touch-action:
      none` + z 10 from the stylesheet.
-- [ ] 8. Build config, exports map, SSR test, README; `npm pack` → install tarball into
-     scratch Vite app **before** writing the demo
+- [x] 8. Build config, exports map, SSR test, README; `npm pack` → install tarball into
+     scratch Vite app **before** writing the demo — done: tsup (ESM + d.ts, CSS copied
+     raw), exports map (root + styles.css + both themes), `repository.directory`,
+     LICENSE duplicated into the package, SSR test extended (generated positions in the
+     markup, zero transforms, every src module imported in Node — no browser globals at
+     module scope), full README at root and package. Tarball verified from a fresh
+     Vite + React + TS app outside the workspace: `tsc` + `vite build` resolve all four
+     export paths, GSAP plugins land in their own dynamic chunks, Node `renderToString`
+     emits the 114 objects plain. (Importing BOTH themes at once lets the consumer's CSS
+     minifier drop the earlier one — identical selectors, fully overridden; the
+     documented contract is exactly one theme, so not a packaging bug.)
 - [ ] 9. `apps/demo` (Vite + React + TS, void theme, minerals + emoji datasets)
 
 ## reference/

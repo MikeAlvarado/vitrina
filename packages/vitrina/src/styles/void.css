@@ -32,11 +32,14 @@
 }
 
 /* Every copy of an object carries the same halo: plane instance, grid card,
-   panel slot copy, and both flying visuals. */
+   panel slot copy, and both flying visuals. NO surface: the object is a
+   cut-out, and any background would hand the halo the rectangle instead of the
+   silhouette. */
 [data-vitrina-object],
 [data-vitrina-slot],
 [data-vitrina-flight],
 [data-vitrina-relay] {
+  background: transparent;
   filter: var(--vitrina-object-shadow);
 }
 

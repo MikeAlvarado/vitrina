@@ -73,6 +73,57 @@ describe('base.css is structural and theme-blind', () => {
     expect(gated).toBe('none');
   });
 
+  it('centres and caps the content of every object copy — renderObject gets a ready-sized box', () => {
+    for (const selector of [
+      '[data-vitrina-object]',
+      '[data-vitrina-slot]',
+      '[data-vitrina-flight]',
+      '[data-vitrina-relay]',
+    ]) {
+      const body = cssBodies(selector).join(';');
+      expect(body, selector).toMatch(/place-items\s*:\s*center/);
+      // A size container: text content takes its size from the box (cqmin).
+      expect(body, selector).toMatch(/container-type\s*:\s*size/);
+      expect(cssDecl(`${selector} > *`, 'max-width'), selector).toBe('100%');
+      expect(cssDecl(`${selector} > *`, 'max-height'), selector).toBe('100%');
+      expect(cssDecl(`${selector} > *`, 'font-size'), selector).toBe(
+        'var(--vitrina-object-font-size)',
+      );
+      // The real case — an image — fills the box with no work from the consumer.
+      for (const child of ['img', 'svg'] as const) {
+        expect(cssDecl(`${selector} > ${child}`, 'width'), selector).toBe('100%');
+        expect(cssDecl(`${selector} > ${child}`, 'height'), selector).toBe('100%');
+        expect(cssDecl(`${selector} > ${child}`, 'object-fit'), selector).toBe('contain');
+      }
+    }
+    // The default is relative to the box, not an absolute size.
+    expect(cssDecl('[data-vitrina-root]', '--vitrina-object-font-size')).toMatch(/cqmin$/);
+  });
+
+  it('paints no button surface — the object is a cut-out, the shadow follows the silhouette', () => {
+    const body = cssBodies('[data-vitrina-object]').join(';');
+    // `appearance: auto` alone lets some engines paint the native button face.
+    expect(body).toMatch(/appearance\s*:\s*none/);
+    expect(cssDecl('[data-vitrina-object]', 'background')).toBe('transparent');
+    // And the themes repeat it where they attach the drop-shadow: a theme owns
+    // ALL paint, so the transparent ground is part of its contract too.
+    for (const css of [paperCss, voidCss]) {
+      for (const selector of [
+        '[data-vitrina-object]',
+        '[data-vitrina-slot]',
+        '[data-vitrina-flight]',
+        '[data-vitrina-relay]',
+      ]) {
+        expect(cssDecl(selector, 'background', css), selector).toBe('transparent');
+      }
+    }
+  });
+
+  it('the root fills its container — a sized host is all the README example needs', () => {
+    expect(cssDecl('[data-vitrina-root]', 'width')).toBe('100%');
+    expect(cssDecl('[data-vitrina-root]', 'height')).toBe('100%');
+  });
+
   it('defines every motion token the runtime reads at mount', () => {
     const required = [
       '--vitrina-dur-micro',
