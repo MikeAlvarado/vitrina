@@ -86,7 +86,7 @@ export const VIEW_FLIP_SECONDS = 0.7;
 /*
  * Detail flight: one object, plane ↔ panel. Library tuning; fallbacks for
  * `--vitrina-dur-flight` / `--vitrina-ease-flight`. The slot the object lands in
- * and the panel's width are `--vitrina-detail-object` / `--vitrina-panel-width`
+ * and the panel's coverage are `--vitrina-detail-object` / `--vitrina-panel-size`
  * in base.css.
  */
 export const DETAIL_FLIGHT_SECONDS = 0.6;

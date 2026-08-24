@@ -79,6 +79,17 @@ export type VitrinaDetailPhase = 'idle' | 'opening' | 'open' | 'closing';
  */
 export type VitrinaOpenCollision = 'serialize' | 'crossfade';
 
+/** Which edge of the root the detail panel occupies. */
+export type VitrinaPanelSide = 'left' | 'right' | 'top' | 'bottom';
+
+/**
+ * What dismisses an open panel. An explicit array, not booleans: leaving one
+ * out is a decision, not a default that happened to you. 'outside' is out of
+ * the default on purpose — clicking another object switches without closing,
+ * and dragging the plane does not close either.
+ */
+export type VitrinaDismiss = 'escape' | 'outside' | 'planeDrag';
+
 export interface VitrinaObjectContext {
   instanceId: string;
   isActive: boolean;
@@ -86,11 +97,24 @@ export interface VitrinaObjectContext {
   view: VitrinaView;
 }
 
+/**
+ * Handed to every panel render prop (`renderAbove`, `renderBeside`,
+ * `renderDetail`, `renderBelow`, `renderClose`). One object per state change,
+ * shared across the holes.
+ */
 export interface VitrinaDetailContext {
   close(): void;
-  next(): void;
-  prev(): void;
+  /** Relay to the entity `delta` places away in `entities` order, circular. */
+  step(delta: number): void;
+  /** The entity the panel is rendering for. */
+  activeId: string | null;
   view: VitrinaView;
+  /**
+   * True once the flight has landed and the panel's copy is the visible one.
+   * A consumer rendering its own copy of the object hides it while this is
+   * false — the clone is still travelling.
+   */
+  objectSettled: boolean;
 }
 
 /**
@@ -164,12 +188,51 @@ export interface VitrinaProps {
   renderObject: (entity: VitrinaEntity, ctx: VitrinaObjectContext) => ReactNode;
 
   /**
-   * The contents of the detail panel. The library owns the panel shell and the
-   * flight — and the slot the object lands in, drawn with `renderObject` — and
-   * renders nothing else inside: no close button, no copy. `ctx.close()` is how
-   * the consumer's own close control works; Escape always does.
+   * The panel's content holes. The library owns the shell, the flight, the slot
+   * the object lands in (drawn with `renderObject`) and the ORDER of the column;
+   * the consumer fills the holes. Top to bottom, always:
+   *
+   *   renderAbove
+   *   [renderBeside] [object slot]   ← the row; `besidePlacement` picks the side
+   *   renderDetail
+   *   renderBelow
+   *
+   * All optional; each receives `(entity, ctx)`. The column is a flex column
+   * with `min-height: 100%`, so a `margin-top: auto` on `renderBelow`'s root
+   * pushes it to the foot. The library renders no copy and no buttons of its
+   * own inside.
    */
+  renderAbove?: (entity: VitrinaEntity, ctx: VitrinaDetailContext) => ReactNode;
+  renderBeside?: (entity: VitrinaEntity, ctx: VitrinaDetailContext) => ReactNode;
   renderDetail?: (entity: VitrinaEntity, ctx: VitrinaDetailContext) => ReactNode;
+  renderBelow?: (entity: VitrinaEntity, ctx: VitrinaDetailContext) => ReactNode;
+
+  /**
+   * The close control, mounted in a region that NEVER scrolls (a sibling of the
+   * card, overlaying it). On a short phone the content overflows, and a close
+   * that scrolls away leaves the panel with no visible exit. The consumer
+   * decides shape and position; the library guarantees the region. Reserve the
+   * band it occupies with `--vitrina-panel-fixed-inset` (the content column's
+   * padding), so the content never guesses.
+   */
+  renderClose?: (ctx: VitrinaDetailContext) => ReactNode;
+
+  /** Which edge the panel occupies. Its size along that axis is `--vitrina-panel-size` (CSS, not a prop). */
+  panelSide?: VitrinaPanelSide;
+  /** Which side of the object `renderBeside` sits on in the row. */
+  besidePlacement?: 'start' | 'end';
+
+  /** What dismisses an open panel. Defaults to `['escape']` — see `VitrinaDismiss`. */
+  dismissOn?: VitrinaDismiss[];
+
+  /**
+   * `true` traps focus in the panel (and marks the dialog `aria-modal`). It
+   * exists because a panel at 100% leaves no plane visible, and free focus
+   * sends Tab into a plane nobody sees. Tie it to the same breakpoint as
+   * `--vitrina-panel-size` (your `useMediaQuery` → `modal={compact}`). No
+   * overlay either way — the plane stays alive beside a non-modal panel.
+   */
+  modal?: boolean;
 
   /** Controlled active item. Omit for uncontrolled. */
   activeId?: string | null;

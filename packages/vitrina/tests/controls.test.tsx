@@ -16,6 +16,7 @@ import { gsap } from 'gsap';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VitrinaControls } from '../src';
+import { cssDecl } from './css';
 import {
   Probe,
   currentApi,
@@ -79,6 +80,29 @@ describe('<VitrinaControls>', () => {
     expect(currentApi().view).toBe('grid');
     expect(host.querySelector('[data-vitrina-grid]')).not.toBeNull();
     expect(button(host, 'view-toggle')?.textContent).toBe(labels.toPlane);
+
+    await act(async () => root.unmount());
+  });
+
+  it('sits on its own rung — above the plane, below the panel — and only its buttons take the pointer', async () => {
+    stubs.prefersReduced = true;
+    const { host, root } = await mountStrict({ children: <VitrinaControls /> });
+    const strip = controls(host);
+
+    // The strip belongs to the PLANE, not the panel: base.css gives the
+    // container the controls token (no inline z anywhere), and the token's
+    // value ranks plane < controls < panel — a dragged object passes BEHIND
+    // the buttons, and an open panel covers them where it overlaps.
+    expect(cssDecl('[data-vitrina-controls]', 'z-index')).toBe('var(--vitrina-z-controls)');
+    expect(strip?.style.zIndex).toBe('');
+    const zToken = (name: string) => Number(cssDecl('[data-vitrina-root]', `--vitrina-z-${name}`));
+    expect(zToken('plane')).toBeLessThan(zToken('controls'));
+    expect(zToken('controls')).toBeLessThan(zToken('panel'));
+
+    // The container eats no pointerdown: none on the box, auto only on the
+    // buttons — a drag starting in the gap between them reaches the plane.
+    expect(cssDecl('[data-vitrina-controls]', 'pointer-events')).toBe('none');
+    expect(cssDecl('[data-vitrina-controls] button', 'pointer-events')).toBe('auto');
 
     await act(async () => root.unmount());
   });

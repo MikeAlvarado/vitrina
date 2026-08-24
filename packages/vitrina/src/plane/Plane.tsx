@@ -103,6 +103,8 @@ export interface PlaneProps {
   onOpen: (entityId: string, instanceId: string) => void;
   /** Registers each object button with the root, by exact instance id. */
   onNode: (instanceId: string, el: HTMLElement | null) => void;
+  /** A real drag started (past the click threshold) — the root's `dismissOn: 'planeDrag'` hook. */
+  onDragStart?: () => void;
   /** The motion tokens, read once at the root's mount. */
   motion: GetMotion;
 }
@@ -139,6 +141,7 @@ export function Plane({
   activeEntityId,
   onOpen,
   onNode,
+  onDragStart,
   motion,
 }: PlaneProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -181,6 +184,8 @@ export function Plane({
   const reducedRef = useRef(reduced);
   /** The node callbacks below are created once per id; they read the current registrar here. */
   const onNodeRef = useRef(onNode);
+  /** Read by the Draggable (created once per geometry) so a prop change needs no rebuild. */
+  const onDragStartRef = useRef(onDragStart);
   /** Re-renders once per finished reveal batch so `renderObject` sees `isRevealed` flip. */
   const [, bumpRevealed] = useReducer((n: number) => n + 1, 0);
 
@@ -297,6 +302,9 @@ export function Plane({
   useIsomorphicLayoutEffect(() => {
     onNodeRef.current = onNode;
   }, [onNode]);
+  useIsomorphicLayoutEffect(() => {
+    onDragStartRef.current = onDragStart;
+  }, [onDragStart]);
 
   const nodeRef = (id: string) => {
     let ref = nodeRefsRef.current.get(id);
@@ -576,6 +584,9 @@ export function Plane({
           cursor: 'grab',
           activeCursor: 'grabbing',
           onPress: promote,
+          // Fires once per gesture, only past minimumMovement — a click never
+          // does. The root closes the panel here under dismissOn: 'planeDrag'.
+          onDragStart: () => onDragStartRef.current?.(),
           onDrag: syncPan,
           onRelease: demote,
           onThrowUpdate: syncPan,

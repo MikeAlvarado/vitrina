@@ -228,6 +228,9 @@ describe('a single open: panel reveals, then the object flies in', () => {
     expect(cssDecl('[data-vitrina-root]', 'filter')).toBeNull();
     const zToken = (name: string) => Number(cssDecl('[data-vitrina-root]', `--vitrina-z-${name}`));
     expect(zToken('plane')).toBeLessThan(zToken('panel'));
+    // The controls rung sits between them: chrome over the objects, under the panel.
+    expect(zToken('plane')).toBeLessThan(zToken('controls'));
+    expect(zToken('controls')).toBeLessThan(zToken('panel'));
     // The flight beats the panel from the first frame — this is the whole fix.
     expect(zToken('panel')).toBeLessThan(zToken('flight'));
 
@@ -443,12 +446,12 @@ describe('the API and the consumer', () => {
     expect(panelEntity(host)).toBe('e3');
     expect((ctx as unknown as VitrinaDetailContext).view).toBe('plane');
 
-    act(() => (ctx as unknown as VitrinaDetailContext).next());
+    act(() => (ctx as unknown as VitrinaDetailContext).step(1));
     expect(currentApi().activeId).toBe('e4');
     landUntilSettled(host);
     expect(panelEntity(host)).toBe('e4');
 
-    act(() => (ctx as unknown as VitrinaDetailContext).prev());
+    act(() => (ctx as unknown as VitrinaDetailContext).step(-1));
     landUntilSettled(host);
     expect(currentApi().activeId).toBe('e3');
 

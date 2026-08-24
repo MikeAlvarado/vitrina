@@ -10,6 +10,8 @@ export type {
   VitrinaView,
   VitrinaDetailPhase,
   VitrinaOpenCollision,
+  VitrinaPanelSide,
+  VitrinaDismiss,
   VitrinaObjectContext,
   VitrinaDetailContext,
   VitrinaLabels,

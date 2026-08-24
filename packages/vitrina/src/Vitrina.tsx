@@ -26,6 +26,7 @@ import { gsap } from 'gsap';
 import type {
   VitrinaApi,
   VitrinaDetailContext,
+  VitrinaDismiss,
   VitrinaOpenCollision,
   VitrinaProps,
   VitrinaView,
@@ -55,6 +56,26 @@ import type { DetailState, PanelPhase } from './detail/machine';
 const clampIndex = (index: number, count: number): number =>
   count <= 0 ? 0 : Math.min(count - 1, Math.max(0, Math.floor(index)));
 
+/** Stable default so an omitted `dismissOn` never churns the effects. */
+const DEFAULT_DISMISS: readonly VitrinaDismiss[] = ['escape'];
+
+/*
+ * Development or production, without demanding Node's types: the literal
+ * `process.env.NODE_ENV` is the one token every bundler rewrites (and Node
+ * provides); the local ambient declaration keeps consumers whose tsconfig pins
+ * `types` compiling. Where neither bundler nor Node exists (unbundled browser
+ * ESM) the read throws and we assume development — the coverage warning below
+ * is advice, and advice belongs in development.
+ */
+declare const process: { env: { NODE_ENV?: string } } | undefined;
+function isProduction(): boolean {
+  try {
+    return process!.env.NODE_ENV === 'production';
+  } catch {
+    return false;
+  }
+}
+
 /** A click waiting for the controlled `activeId` prop to follow it. */
 interface PendingOrigin {
   entityId: string;
@@ -67,7 +88,15 @@ export function Vitrina({
   instances,
   layout,
   renderObject,
+  renderAbove,
+  renderBeside,
   renderDetail,
+  renderBelow,
+  renderClose,
+  panelSide = 'right',
+  besidePlacement = 'start',
+  dismissOn = DEFAULT_DISMISS as VitrinaDismiss[],
+  modal = false,
   activeId: activeIdProp,
   defaultActiveId = null,
   onActiveChange,
@@ -318,14 +347,24 @@ export function Vitrina({
     [entities, activate, pickOrigin],
   );
 
+  /*
+   * `objectSettled` is what lets a consumer render its own copy of the object
+   * (renderBeside, a hero image) and hide it while the clone travels: false
+   * from the click until the flight lands in the slot, false again the moment
+   * a close or relay lifts the object off. Derived from the machine, not
+   * tracked — the same commit that shows the slot flips it.
+   */
+  const objectSettled = detail.panel === 'open' && detail.flight === 'shown';
+  const ctxActiveId = detail.active?.entityId ?? null;
   const detailContext = useMemo<VitrinaDetailContext>(
     () => ({
       close: closeDetail,
-      next: () => stepDetail(1),
-      prev: () => stepDetail(-1),
+      step: stepDetail,
+      activeId: ctxActiveId,
       view,
+      objectSettled,
     }),
-    [closeDetail, stepDetail, view],
+    [closeDetail, stepDetail, ctxActiveId, view, objectSettled],
   );
 
   /*
@@ -382,10 +421,18 @@ export function Vitrina({
    *    the cover). `landed` ends it.
    *
    * Keyed on the phase and the instance, so each park→fly and relay swap re-runs;
-   * a same-phase re-render does not.
+   * a same-phase re-render does not. `panelSide` is in the key too: moving the
+   * panel moves the slot, so a park over it re-parks and a flight retargets —
+   * resuming from wherever the visual is (`resumeFromRef`, captured in the
+   * cleanup before the revert), never teleporting back to its start.
    */
-  const activeFlightKey = `${portalReady ? 'p' : '-'}:${detail.flight}:${detail.relaying === null ? 'own' : 'relay'}:${detail.active?.instanceId ?? ''}`;
+  const resumeFromRef = useRef<DOMRect | null>(null);
+  const activeFlightKey = `${portalReady ? 'p' : '-'}:${detail.flight}:${detail.relaying === null ? 'own' : 'relay'}:${detail.active?.instanceId ?? ''}:${panelSide}`;
   useIsomorphicLayoutEffect(() => {
+    // Consumed (or discarded) on EVERY run: a rect captured by a landing's or
+    // unmount's cleanup must never seed a later, unrelated flight.
+    const resume = resumeFromRef.current;
+    resumeFromRef.current = null;
     const { flight, active, relaying } = detail;
     const hasOrigin = active?.instanceId != null;
     const parkingAtOrigin = flight === 'waiting' && relaying === null && hasOrigin;
@@ -426,7 +473,9 @@ export function Vitrina({
       return () => ctx.revert();
     }
 
-    const from = (flight === 'in' ? origin : slot).getBoundingClientRect();
+    // A retarget mid-flight (the previous run was flying too — a hot panelSide
+    // change, a reversed close) resumes from the visual's captured position.
+    const from = resume ?? (flight === 'in' ? origin : slot).getBoundingClientRect();
     const to = (flight === 'in' ? slot : origin).getBoundingClientRect();
     if (from.width === 0 || from.height === 0 || to.width === 0 || to.height === 0) {
       settle();
@@ -435,7 +484,12 @@ export function Vitrina({
     const ctx = gsap.context(() => {
       flyVisual(visual, from, to, motion().durFlight, settle);
     }, root);
-    return () => ctx.revert();
+    return () => {
+      // Before the revert snaps the visual back: remember where the flight was,
+      // in case the next run is the same flight aimed at a moved destination.
+      resumeFromRef.current = visual.getBoundingClientRect();
+      ctx.revert();
+    };
   }, [activeFlightKey]);
 
   /*
@@ -592,7 +646,9 @@ export function Vitrina({
    * depends on the active id, because it re-arms when the panel jumps from A to
    * B without closing. With one dependency list, switching objects would replay
    * the panel's own entrance with the panel already open. Scoped to the content
-   * box, so a line outside it enters once with the panel and never again.
+   * COLUMN — every hole that receives the entity (above, beside, detail, below)
+   * re-arms; a line outside it (the fixed close region, which is entity-blind)
+   * enters once with the panel and never again.
    *
    * The re-arm derives from the id during render-to-render comparison — the
    * content is NEVER remounted with a key (a remount kills any crossfade the
@@ -614,7 +670,7 @@ export function Vitrina({
     if (contentEntityId === null || prev === null || prev === contentEntityId) return;
     if (reducedRef.current) return;
     const root = rootRef.current;
-    const content = panelRef.current?.querySelector('[data-vitrina-detail-content]');
+    const content = panelRef.current?.querySelector('[data-vitrina-panel-content]');
     const lines = content ? Array.from(content.querySelectorAll('[data-vitrina-line]')) : [];
     if (lines.length === 0) return;
     const step = motion().staggerLine;
@@ -713,17 +769,124 @@ export function Vitrina({
     target?.focus({ preventScroll: true });
   }, [detail]);
 
-  // Escape closes, from wherever focus is — the plane stays interactive beside
-  // the panel, so focus may well be out there.
+  /*
+   * What dismisses the panel — each trigger its own opt-in, read as booleans so
+   * a fresh array literal never churns the effects. 'escape' listens on the
+   * document (the plane stays interactive beside the panel, so focus may well
+   * be out there). 'outside' closes on a click that is neither in the panel nor
+   * on an object — a click on another object is a switch, not a dismissal, and
+   * the listener lands after the opening click's dispatch, so a panel never
+   * closes itself on the click that opened it. 'planeDrag' rides the plane's
+   * own drag start (below), never the wheel.
+   */
   const panelOpen = detail.panel === 'open';
+  const dismissEscape = dismissOn.includes('escape');
+  const dismissOutside = dismissOn.includes('outside');
+  const dismissPlaneDrag = dismissOn.includes('planeDrag');
   useEffect(() => {
-    if (!panelOpen) return;
+    if (!panelOpen || !dismissEscape) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !event.defaultPrevented) closeDetail();
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [panelOpen, closeDetail]);
+  }, [panelOpen, dismissEscape, closeDetail]);
+
+  useEffect(() => {
+    if (!panelOpen || !dismissOutside) return;
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (panelRef.current?.contains(target)) return;
+      // Another object switches the panel; closing too would race the open.
+      if (target.closest('[data-vitrina-object]')) return;
+      closeDetail();
+    };
+    document.addEventListener('click', onClick);
+    return () => document.removeEventListener('click', onClick);
+  }, [panelOpen, dismissOutside, closeDetail]);
+
+  const dismissPlaneDragRef = useRef(dismissPlaneDrag);
+  useIsomorphicLayoutEffect(() => {
+    dismissPlaneDragRef.current = dismissPlaneDrag;
+  }, [dismissPlaneDrag]);
+  /** Handed to the plane; fires when a real drag starts (past the click threshold). */
+  const onPlaneDragStart = useCallback(() => {
+    if (dismissPlaneDragRef.current) closeDetail();
+  }, [closeDetail]);
+
+  /*
+   * `modal`: trap focus in the panel. It exists for the panel that covers
+   * everything — free focus there sends Tab into a plane nobody sees. A keydown
+   * cycle over the panel's focusables (no inert, no overlay: with modal false
+   * the plane must stay fully alive, and this effect does not run at all).
+   */
+  useEffect(() => {
+    if (!panelOpen || !modal) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || event.defaultPrevented) return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusables = Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'a[href], button, input, select, textarea, [tabindex]',
+        ),
+      ).filter(
+        (el) =>
+          !(el as HTMLButtonElement).disabled && el.getAttribute('tabindex') !== '-1',
+      );
+      const active = document.activeElement;
+      if (focusables.length === 0) {
+        event.preventDefault();
+        panel.focus({ preventScroll: true });
+        return;
+      }
+      const first = focusables[0] as HTMLElement;
+      const last = focusables[focusables.length - 1] as HTMLElement;
+      // Not on a focusable of the panel — outside it, or on the panel container
+      // itself (where open puts it): Tab enters the cycle instead of leaving.
+      const index = active instanceof HTMLElement ? focusables.indexOf(active) : -1;
+      if (index === -1) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus({ preventScroll: true });
+        return;
+      }
+      if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [panelOpen, modal]);
+
+  /*
+   * Development-only, once: a panel covering ≥95% of the root with modal={false}
+   * leaves Tab wandering a plane nobody can see. The library has no breakpoints
+   * and will not decide for the consumer — a console warning is the one way to
+   * flag the inaccessible combination without deciding.
+   */
+  const warnedCoverageRef = useRef(false);
+  useEffect(() => {
+    if (!panelOpen || modal || warnedCoverageRef.current) return;
+    if (isProduction()) return;
+    const rootRect = rootRef.current?.getBoundingClientRect();
+    const panelRect = panelRef.current?.getBoundingClientRect();
+    if (!rootRect || !panelRect || rootRect.width === 0 || rootRect.height === 0) return;
+    const coverage = (panelRect.width * panelRect.height) / (rootRect.width * rootRect.height);
+    if (coverage >= 0.95) {
+      warnedCoverageRef.current = true;
+      console.warn(
+        '[vitrina] The detail panel covers ≥95% of the plane with modal={false}: ' +
+          'Tab reaches a plane nobody can see. Pass modal={true} at the same ' +
+          'breakpoint where --vitrina-panel-size makes the panel cover everything.',
+      );
+    }
+  }, [panelOpen, modal]);
 
   // --- API -----------------------------------------------------------------
 
@@ -826,6 +989,7 @@ export function Vitrina({
             activeEntityId={activeCtxEntityId}
             onOpen={openDetail}
             onNode={registerNode}
+            onDragStart={onPlaneDragStart}
             motion={motion}
           />
         ) : (
@@ -852,12 +1016,19 @@ export function Vitrina({
             copy={copy}
             panelAnim={panelAnim}
             view={view}
+            side={panelSide}
+            besidePlacement={besidePlacement}
+            modal={modal}
             relayEntity={relayEntity}
             relayInstanceId={detail.relaying?.instanceId ?? null}
             relayFlying={relayFlying}
             portalReady={portalReady}
             renderObject={renderObject}
+            renderAbove={renderAbove}
+            renderBeside={renderBeside}
             renderDetail={renderDetail}
+            renderBelow={renderBelow}
+            renderClose={renderClose}
             labels={labels}
             detailContext={detailContext}
             panelRef={panelRef}

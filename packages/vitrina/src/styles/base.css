@@ -21,20 +21,27 @@
 [data-vitrina-root] {
   /*
    * Stacking scale. Every layer the library paints places itself here — no bare
-   * z-index in a component. Three rungs, gaps left for consumer chrome:
-   *   plane  — the plane/grid object layer: EVERY object, the active one
-   *            included. Nothing rises per-object; the active object is hidden
-   *            (visibility) while its clone flies, it never changes layer.
-   *   panel  — the detail panel container.
-   *   flight — the flying object(s): the active clone, and the relay flying home.
-   *            ABOVE the panel in every state, so the object never ducks behind
-   *            the panel mid-flight. Carried by the PORTAL WRAPPER on body — the
-   *            node that competes against the panel in the document's root
-   *            stacking context.
+   * z-index in a component. Four rungs, gaps left for consumer chrome:
+   *   plane    — the plane/grid object layer: EVERY object, the active one
+   *              included. Nothing rises per-object; the active object is hidden
+   *              (visibility) while its clone flies, it never changes layer.
+   *   controls — <VitrinaControls>. It belongs to the PLANE, not the panel:
+   *              above the objects (at the same level an object dragged under
+   *              the strip could paint over a button) and below the panel,
+   *              which covers the controls only where it overlaps — the plane
+   *              stays alive beside an open panel, and its chrome must stay
+   *              reachable in the visible half.
+   *   panel    — the detail panel container.
+   *   flight   — the flying object(s): the active clone, and the relay flying
+   *              home. ABOVE the panel in every state, so the object never
+   *              ducks behind the panel mid-flight. Carried by the PORTAL
+   *              WRAPPER on body — the node that competes against the panel in
+   *              the document's root stacking context.
    * Consumer chrome that must sit over the panel takes a value above
    * --vitrina-z-flight.
    */
   --vitrina-z-plane: 10;
+  --vitrina-z-controls: 20;
   --vitrina-z-panel: 40;
   --vitrina-z-flight: 50;
 
@@ -84,7 +91,21 @@
   --vitrina-grid-cell: 240px;
   --vitrina-grid-gap: 80px;
   --vitrina-detail-object: 240px;
-  --vitrina-panel-width: 50%;
+  /*
+   * How much the panel covers — applied to the axis `panelSide` dictates
+   * (width for left/right, height for top/bottom). The library ships no
+   * breakpoints: the consumer sets 100% on mobile and 50% on desktop under
+   * their own media query. (Tie `modal` to the same breakpoint.)
+   */
+  --vitrina-panel-size: 50%;
+  /*
+   * Padding of the panel's content column — the room the content reserves for
+   * chrome in the fixed (non-scrolling) region, the close control above all. A
+   * full padding shorthand: `64px 24px 24px` reserves the top band the ✕
+   * occupies. The library has no breakpoints, so retune it under your own
+   * media query alongside the ✕'s position.
+   */
+  --vitrina-panel-fixed-inset: 0px;
 
   /*
    * Text/emoji content. Images fill the object's box on their own (see the
@@ -189,6 +210,23 @@
   outline-color: var(--vitrina-focus, currentColor);
 }
 
+/*
+ * The controls strip: its own rung, above the object layer and below the panel
+ * (see the scale above). The z-index bites once the consumer positions the
+ * strip — which placing chrome over a plane always requires anyway. The
+ * CONTAINER takes no pointer events, only the buttons do: a drag starting in
+ * the empty space around and between the buttons must reach the plane's
+ * viewport, not die on chrome padding.
+ */
+[data-vitrina-controls] {
+  z-index: var(--vitrina-z-controls);
+  pointer-events: none;
+}
+
+[data-vitrina-controls] button {
+  pointer-events: auto;
+}
+
 /* Plane instances position absolutely in the world; left/top/size are inline
    (computed per instance). Grid cards stay in grid flow. */
 [data-vitrina-pan] > [data-vitrina-object] {
@@ -239,17 +277,52 @@
 
 /* The panel wrapper: stable across the wipe, holds any consumer chrome that
    sticks out past the seam (a sibling of the card, never its child). Focused
-   programmatically on open (tabIndex -1): a container, no ring. */
+   programmatically on open (tabIndex -1): a container, no ring. Which edge it
+   occupies is the `data-vitrina-panel-side` attribute (the `panelSide` prop);
+   how much of that axis it takes is `--vitrina-panel-size`. Each side also
+   declares the wipe's hidden clip (`--vitrina-panel-clip`, consumed by the
+   keyframes below), so changing the side re-aims the mask by itself. */
 [data-vitrina-panel] {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: var(--vitrina-panel-width);
-  max-width: 100%;
   box-sizing: border-box;
   pointer-events: auto;
   outline: none;
+}
+
+[data-vitrina-panel][data-vitrina-panel-side='right'] {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--vitrina-panel-size);
+  max-width: 100%;
+  --vitrina-panel-clip: inset(0 0 0 100%);
+}
+
+[data-vitrina-panel][data-vitrina-panel-side='left'] {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--vitrina-panel-size);
+  max-width: 100%;
+  --vitrina-panel-clip: inset(0 100% 0 0);
+}
+
+[data-vitrina-panel][data-vitrina-panel-side='top'] {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--vitrina-panel-size);
+  max-height: 100%;
+  --vitrina-panel-clip: inset(0 0 100% 0);
+}
+
+[data-vitrina-panel][data-vitrina-panel-side='bottom'] {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--vitrina-panel-size);
+  max-height: 100%;
+  --vitrina-panel-clip: inset(100% 0 0 0);
 }
 
 /*
@@ -272,12 +345,58 @@
   clip-path: inset(0);
 }
 
+/*
+ * The content column — the panel's composable order, inside the card. A flex
+ * column with `min-height: 100%`, and the min-height is load-bearing: without
+ * it there is no slack to distribute and a `margin-top: auto` on the
+ * consumer's `renderBelow` has nothing to push against. The consumer's holes
+ * (above, beside, detail's box, below) are its direct children, in the order
+ * the library dictates. Its padding is the fixed-inset token: the room the
+ * content reserves for the non-scrolling close region overlaying it.
+ */
+[data-vitrina-panel-content] {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: var(--vitrina-panel-fixed-inset);
+}
+
+/* The object's row: [renderBeside] [slot] (or mirrored — `besidePlacement`).
+   min-width: 0 so the row can shrink within the column. */
+[data-vitrina-panel-row] {
+  display: flex;
+  min-width: 0;
+}
+
 /* The slot the object lands in. Always in the DOM (a display:none box has no
-   rect to fly to); visibility is the orchestrator's, inline. */
+   rect to fly to); visibility is the orchestrator's, inline. min-width: 0 is
+   not styling: without it, a wide renderBeside collapses the slot's box in a
+   narrow panel instead of both shrinking. */
 [data-vitrina-slot] {
   position: relative;
   width: var(--vitrina-detail-object);
   height: var(--vitrina-detail-object);
+  min-width: 0;
+}
+
+/*
+ * The fixed region: where `renderClose` mounts — a SIBLING of the card, inside
+ * the wrapper, so it is OUTSIDE the scroll container and can never scroll away
+ * (on a short phone the content overflows, and a ✕ that leaves with the scroll
+ * strands the panel with no visible exit). Outside the card's clip-path too,
+ * so chrome may stick out past the seam without being cut into a crescent.
+ * The region itself takes no pointer events — it overlays the whole card and
+ * must not eat its scroll — only what the consumer puts in it does.
+ */
+[data-vitrina-panel-fixed] {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+[data-vitrina-panel-fixed] > * {
+  pointer-events: auto;
 }
 
 /* --- The flight (portalled to document.body) ------------------------------- */
@@ -391,9 +510,12 @@
   animation: vitrina-panel-cover var(--vitrina-dur-panel) var(--vitrina-panel-ease-out) both;
 }
 
+/* The hidden clip comes from the side rule on the panel (inherited by the
+   card), so ONE pair of keyframes serves all four sides — and a hot `panelSide`
+   change re-aims a wipe by changing the variable, not the animation. */
 @keyframes vitrina-panel-reveal {
   from {
-    clip-path: inset(0 0 0 100%);
+    clip-path: var(--vitrina-panel-clip, inset(0 0 0 100%));
   }
   to {
     clip-path: inset(0);
@@ -405,7 +527,7 @@
     clip-path: inset(0);
   }
   to {
-    clip-path: inset(0 0 0 100%);
+    clip-path: var(--vitrina-panel-clip, inset(0 0 0 100%));
   }
 }
 

@@ -57,6 +57,8 @@ export const labels: VitrinaLabels = {
 export interface DomStubs {
   /** What the viewport measures. Mutable: change it, then fire `onResize`. */
   view: { width: number; height: number };
+  /** What the panel wrapper measures — 0×0 by default (the coverage warning stays silent). */
+  panel: { width: number; height: number };
   /** Read by the matchMedia stub. Set BEFORE mounting. */
   prefersReduced: boolean;
   /** ResizeObservers constructed — the measuring effect builds one per mount, so StrictMode shows as ≥ 2. */
@@ -71,6 +73,7 @@ export interface DomStubs {
 export function stubDom(): DomStubs {
   const stubs: DomStubs = {
     view: { ...VIEW },
+    panel: { width: 0, height: 0 },
     prefersReduced: false,
     observersBuilt: 0,
     onResize: null,
@@ -127,6 +130,10 @@ export function stubDom(): DomStubs {
       }
       // The detail slot: somewhere on the right half, so a flight has a real delta.
       if (this.hasAttribute('data-vitrina-slot')) return rect(SLOT.x, SLOT.y, SLOT.size, SLOT.size);
+      // The panel wrapper: only the coverage-warning test gives it a size.
+      if (this.hasAttribute('data-vitrina-panel')) {
+        return rect(0, 0, stubs.panel.width, stubs.panel.height);
+      }
       return rect(0, 0, 0, 0);
     });
   return stubs;
@@ -230,6 +237,11 @@ export const detailOf = (host: HTMLElement) => ({
   card: host.querySelector<HTMLElement>('[data-vitrina-panel-card]'),
   slot: host.querySelector<HTMLElement>('[data-vitrina-slot]'),
   content: host.querySelector<HTMLElement>('[data-vitrina-detail-content]'),
+  // The composable column, its object row, and renderClose's fixed region.
+  column: host.querySelector<HTMLElement>('[data-vitrina-panel-content]'),
+  row: host.querySelector<HTMLElement>('[data-vitrina-panel-row]'),
+  fixed: host.querySelector<HTMLElement>('[data-vitrina-panel-fixed]'),
+  panelSide: host.querySelector('[data-vitrina-panel]')?.getAttribute('data-vitrina-panel-side') ?? null,
   // The flight layers are PORTALLED to document.body — outside `host`.
   portal: document.querySelector<HTMLElement>('[data-vitrina-flight-portal]'),
   flightLayer: document.querySelector<HTMLElement>('[data-vitrina-flight-layer]'),

@@ -43,8 +43,24 @@
   filter: var(--vitrina-object-shadow);
 }
 
+/* The seam sits on whichever edge faces the plane (`panelSide`). */
 [data-vitrina-panel-card] {
   background: var(--vitrina-panel-surface);
   color: var(--vitrina-ink);
+}
+
+[data-vitrina-panel-side='right'] [data-vitrina-panel-card] {
   border-left: 1px solid var(--vitrina-seam);
+}
+
+[data-vitrina-panel-side='left'] [data-vitrina-panel-card] {
+  border-right: 1px solid var(--vitrina-seam);
+}
+
+[data-vitrina-panel-side='top'] [data-vitrina-panel-card] {
+  border-bottom: 1px solid var(--vitrina-seam);
+}
+
+[data-vitrina-panel-side='bottom'] [data-vitrina-panel-card] {
+  border-top: 1px solid var(--vitrina-seam);
 }

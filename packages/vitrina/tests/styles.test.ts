@@ -141,6 +141,72 @@ describe('base.css is structural and theme-blind', () => {
   });
 });
 
+describe('the composable panel', () => {
+  const SIDES = ['left', 'right', 'top', 'bottom'] as const;
+  const panelAt = (side: string) => `[data-vitrina-panel][data-vitrina-panel-side='${side}']`;
+
+  it('sizes each side with --vitrina-panel-size on the axis the side dictates, and aims the wipe with the clip variable', () => {
+    for (const side of SIDES) {
+      const horizontal = side === 'left' || side === 'right';
+      expect(cssDecl(panelAt(side), horizontal ? 'width' : 'height'), side).toBe(
+        'var(--vitrina-panel-size)',
+      );
+      // The cross axis is pinned by the insets, not sized by the token.
+      expect(cssDecl(panelAt(side), horizontal ? 'height' : 'width'), side).toBeNull();
+      // Each side declares the hidden clip the keyframes consume: changing the
+      // side re-aims the mask without touching the animation.
+      expect(cssDecl(panelAt(side), '--vitrina-panel-clip'), side).toMatch(/^inset\(/);
+    }
+    // One pair of keyframes serves all four sides, off the variable.
+    expect(baseCss).toMatch(/@keyframes vitrina-panel-reveal[\s\S]*?var\(--vitrina-panel-clip/);
+    expect(baseCss).toMatch(/@keyframes vitrina-panel-cover[\s\S]*?var\(--vitrina-panel-clip/);
+    // The tokens themselves exist with usable defaults.
+    expect(cssDecl('[data-vitrina-root]', '--vitrina-panel-size')).not.toBeNull();
+    expect(cssDecl('[data-vitrina-root]', '--vitrina-panel-fixed-inset')).not.toBeNull();
+  });
+
+  it('the content column is a flex column with min-height 100% — the slack margin-top: auto pushes against', () => {
+    expect(cssDecl('[data-vitrina-panel-content]', 'display')).toBe('flex');
+    expect(cssDecl('[data-vitrina-panel-content]', 'flex-direction')).toBe('column');
+    expect(cssDecl('[data-vitrina-panel-content]', 'min-height')).toBe('100%');
+    // The content reserves the fixed region's band through the token, not a guess.
+    expect(cssDecl('[data-vitrina-panel-content]', 'padding')).toBe(
+      'var(--vitrina-panel-fixed-inset)',
+    );
+  });
+
+  it('the slot can shrink beside renderBeside (min-width: 0), and the row too', () => {
+    expect(cssDecl('[data-vitrina-slot]', 'min-width')).toBe('0');
+    expect(cssDecl('[data-vitrina-panel-row]', 'display')).toBe('flex');
+    expect(cssDecl('[data-vitrina-panel-row]', 'min-width')).toBe('0');
+  });
+
+  it('the fixed region overlays the card without scrolling or eating its pointer', () => {
+    // Absolute within the wrapper — outside the card, which is the ONLY scroll
+    // container, so it can never scroll away; and it declares no overflow of
+    // its own (nothing to hand a scroll offset to).
+    expect(cssDecl('[data-vitrina-panel-fixed]', 'position')).toBe('absolute');
+    expect(cssDecl('[data-vitrina-panel-fixed]', 'inset')).toBe('0');
+    expect(cssBodies('[data-vitrina-panel-fixed]').join(';')).not.toMatch(/overflow/);
+    // The region spans the card but must not block it: none on the region, auto
+    // on what the consumer mounts in it.
+    expect(cssDecl('[data-vitrina-panel-fixed]', 'pointer-events')).toBe('none');
+    expect(cssDecl('[data-vitrina-panel-fixed] > *', 'pointer-events')).toBe('auto');
+  });
+
+  it('both themes seam the card on whichever edge faces the plane', () => {
+    const opposite = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' } as const;
+    for (const css of [paperCss, voidCss]) {
+      for (const side of SIDES) {
+        const selector = `[data-vitrina-panel-side='${side}'] [data-vitrina-panel-card]`;
+        expect(cssDecl(selector, `border-${opposite[side]}`, css), side).toMatch(
+          /var\(--vitrina-seam\)/,
+        );
+      }
+    }
+  });
+});
+
 describe('the themes', () => {
   it('define the same token set — swapping themes is a one-line change', () => {
     expect(tokensOf(paperCss)).toEqual(tokensOf(voidCss));
@@ -183,9 +249,10 @@ describe('the themes', () => {
     }
   });
 
-  it('base.css consumes the z tokens on the three competing nodes', () => {
+  it('base.css consumes the z tokens on the four competing nodes', () => {
     expect(cssDecl('[data-vitrina-viewport]', 'z-index')).toBe('var(--vitrina-z-plane)');
     expect(cssDecl('[data-vitrina-grid]', 'z-index')).toBe('var(--vitrina-z-plane)');
+    expect(cssDecl('[data-vitrina-controls]', 'z-index')).toBe('var(--vitrina-z-controls)');
     expect(cssDecl('[data-vitrina-detail]', 'z-index')).toBe('var(--vitrina-z-panel)');
     expect(cssDecl('[data-vitrina-flight-portal]', 'z-index')).toBe('var(--vitrina-z-flight)');
     // And on nothing else: one rung per layer, nothing rises per-object.

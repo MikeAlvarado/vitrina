@@ -122,7 +122,15 @@ detail panel keys off the entity, so every copy opens the same thing.
 | `entities`         | `VitrinaEntity[]`                                | required            | What exists: `{ id, size?, data? }`. `size` is the reference diameter at zoom 1; `data` is yours, handed back verbatim. Duplicate ids throw.     |
 | `renderObject`     | `(entity, ctx) => ReactNode`                     | required            | The object itself, called once per instance. `ctx`: `{ instanceId, isActive, isRevealed, view }`. Must be pure and cheap.                        |
 | `labels`           | `VitrinaLabels`                                  | required            | Every user-visible string (see below). Rendered as aria-labels; the one visible use is `<VitrinaControls>`' button text.                         |
-| `renderDetail`     | `(entity, ctx) => ReactNode`                     | —                   | The detail panel's content. `ctx`: `{ close(), next(), prev(), view }`. The library owns the shell and the flight, renders nothing else inside.  |
+| `renderAbove`      | `(entity, ctx) => ReactNode`                     | —                   | First hole of the panel column, above the object. See “The detail panel is composable”.                                                          |
+| `renderBeside`     | `(entity, ctx) => ReactNode`                     | —                   | Sits in the object's row, beside the landing slot. `besidePlacement` picks which side.                                                           |
+| `renderDetail`     | `(entity, ctx) => ReactNode`                     | —                   | The main content hole, below the object. The library owns the shell, the order and the flight, and renders nothing else inside.                  |
+| `renderBelow`      | `(entity, ctx) => ReactNode`                     | —                   | Last hole. `margin-top: auto` on its root pushes it to the panel's foot.                                                                         |
+| `renderClose`      | `(ctx) => ReactNode`                             | —                   | The close control, mounted in a region that never scrolls. Shape and position are yours; the region is the library's.                            |
+| `panelSide`        | `'left' \| 'right' \| 'top' \| 'bottom'`         | `'right'`           | Which edge the panel occupies. Can change with the panel open — the mask and the flight re-aim. Coverage is `--vitrina-panel-size` (CSS).        |
+| `besidePlacement`  | `'start' \| 'end'`                               | `'start'`           | Whether `renderBeside` comes before or after the object in the row.                                                                              |
+| `dismissOn`        | `('escape' \| 'outside' \| 'planeDrag')[]`       | `['escape']`        | What closes an open panel. An explicit array — see “Dismissal”.                                                                                  |
+| `modal`            | `boolean`                                        | `false`             | Traps focus in the panel (`aria-modal`). Tie it to the breakpoint where `--vitrina-panel-size` reaches 100% — see “modal”.                       |
 | `instances`        | `VitrinaInstance[]`                              | generated           | Provide to skip generation entirely (e.g. precomputed with `generateInstances`).                                                                 |
 | `layout`           | `VitrinaLayout`                                  | measured defaults   | World size, instance count, columns, base size, jitter, separation, `seed`, compact breakpoint. Omitted fields fall back to the defaults.        |
 | `activeId`         | `string \| null`                                 | —                   | Controlled active entity. Omit for uncontrolled.                                                                                                 |
@@ -209,6 +217,11 @@ variables:
 [data-vitrina-panel-card] {
   background: var(--vitrina-panel-surface);
   color: var(--vitrina-ink);
+}
+
+/* The seam sits on whichever edge faces the plane — one rule per `panelSide`
+   you actually use. */
+[data-vitrina-panel-side='right'] [data-vitrina-panel-card] {
   border-left: 1px solid var(--vitrina-seam);
 }
 ```
@@ -233,8 +246,9 @@ class names to collide with and nothing to configure in `tailwind.config`.
 The ease tokens hold **GSAP ease strings**, not CSS timing functions — they drive
 tweens. The panel wipe's own curves stay CSS (`--vitrina-panel-ease-in`/`-out`). Layout
 knobs (`--vitrina-grid-cell`, `--vitrina-grid-gap`, `--vitrina-detail-object`,
-`--vitrina-panel-width`, `--vitrina-object-font-size`) are ordinary custom properties a
-theme may retune under media queries.
+`--vitrina-panel-size`, `--vitrina-panel-fixed-inset`, `--vitrina-object-font-size`)
+are ordinary custom properties a theme — or your own stylesheet — may retune under
+media queries.
 
 ## Controls
 
@@ -244,11 +258,170 @@ three buttons (zoom out, zoom in, view toggle) whose text comes from your `label
 each carrying a `data-vitrina-*` attribute to style and position. It renders nothing
 when the view is locked (see below). Mount it as a child of `<Vitrina>`.
 
+The strip belongs to the **plane**, not the panel: it sits on its own stacking rung
+(`--vitrina-z-controls`, between the objects and the panel), so a dragged object passes
+behind the buttons and an open detail panel covers them where it overlaps — position it,
+but don't give it a `z-index` of your own. The container takes no pointer events (only
+the buttons do), so a drag starting in the gap between buttons still pans the plane.
+
+## The detail panel is composable
+
+The library decides the order and where the object lands; you fill the holes. The
+column, always in this order:
+
+| Hole           | Receives        | Where                                                                                             |
+| -------------- | --------------- | ------------------------------------------------------------------------------------------------- |
+| `renderAbove`  | `(entity, ctx)` | Top of the column.                                                                                 |
+| `renderBeside` | `(entity, ctx)` | In the object's row, `besidePlacement: 'start'` (before the object) or `'end'` (after).            |
+| *object slot*  | —               | The library's: where the flight lands, drawn with `renderObject`. Always present.                  |
+| `renderDetail` | `(entity, ctx)` | Below the object.                                                                                  |
+| `renderBelow`  | `(entity, ctx)` | Bottom. The column is a flex column with `min-height: 100%`, so `margin-top: auto` on your root pushes it to the foot. |
+| `renderClose`  | `(ctx)`         | A fixed region overlaying the card — **never scrolls**, outside the wipe's mask. Position within it is yours. |
+
+Every hole is optional and receives the same `ctx`:
+
+- `close()` — close the panel.
+- `step(delta)` — relay to the entity `delta` places away in `entities` order, circular
+  (`step(1)` / `step(-1)` are next/previous).
+- `activeId` — the entity the panel is rendering for.
+- `view` — `'plane' | 'grid'`.
+- `objectSettled` — `true` only once the flight has landed and the panel's copy is the
+  visible one. If you render your own copy of the object (a hero image, the first
+  thumbnail of a rail), hide it while this is `false` — the clone is still travelling.
+
+Your nodes are **direct flex children** of the column: no wrapper boxes to fight, your
+own flex/margin tricks work as written. The object slot carries `min-width: 0`, so it
+shrinks alongside a wide `renderBeside` in a narrow panel instead of collapsing.
+
+### Side and size
+
+`panelSide` (`'right'` default) picks the edge; **how much the panel covers is CSS, not
+a prop** — `--vitrina-panel-size` applies to the axis the side dictates (width for
+left/right, height for top/bottom). The library ships no breakpoints; make it yours:
+
+```css
+[data-vitrina-root] {
+  --vitrina-panel-size: 100%;
+}
+@media (min-width: 640px) {
+  [data-vitrina-root] {
+    --vitrina-panel-size: 50%;
+  }
+}
+```
+
+`panelSide` can change with the panel open, mid-flight included: the wipe's direction
+and the flight's destination re-aim; nothing breaks, nothing re-wipes.
+
+### The close control and `--vitrina-panel-fixed-inset`
+
+`renderClose` mounts in a region that does not scroll. On a short phone the content
+overflows, and a ✕ that leaves with the scroll strands the panel with no visible exit —
+so the library guarantees the region and you decide the shape and position (absolute
+positioning within it, media queries and all). The content column's padding is the
+token `--vitrina-panel-fixed-inset` (a full `padding` shorthand, default `0px`): set it
+to e.g. `64px 20px 24px` to reserve the top band your ✕ occupies, and retune it under
+your own media query alongside the ✕'s position — the content never guesses.
+
+### Dismissal
+
+`dismissOn` is an explicit array, default `['escape']`:
+
+- `'escape'` — the Escape key.
+- `'outside'` — a click that is neither in the panel nor on an object. Deliberately
+  **not** in the default: clicking another object switches the panel without closing,
+  and dragging the plane does not close either.
+- `'planeDrag'` — the drag that starts a pan.
+
+### `modal`
+
+With `false` (default) there is no overlay, no focus trap, nothing frozen — the plane
+stays alive beside the panel. With `true` focus is trapped in the panel (and the dialog
+is `aria-modal`). It exists because a panel at 100% leaves no plane visible, and free
+focus sends Tab into a plane nobody sees. Tie it to the **same breakpoint** as
+`--vitrina-panel-size` — two lines:
+
+```tsx
+const compact = useMediaQuery('(max-width: 639.98px)'); // your hook, your breakpoint
+<Vitrina modal={compact} … />;
+```
+
+In development, a panel covering ≥95% of the plane with `modal={false}` logs a console
+warning, once.
+
+### A complete panel (the Mediterra layout)
+
+Panel on the left; full width under 640 px and half above (CSS above); code and tag on
+top; a vertical thumbnail rail beside the object; name and price below it; arrows at
+the foot; a ✕ that under 640 px moves to the top-right corner:
+
+```tsx
+<Vitrina
+  entities={entities}
+  labels={labels}
+  panelSide="left"
+  modal={compact}
+  renderObject={(e) => <img src={(e.data as Item).src} alt="" draggable={false} />}
+  renderAbove={(e) => (
+    <header data-vitrina-line="">
+      <span>{(e.data as Item).code}</span> <span className="tag">objeto</span>
+    </header>
+  )}
+  renderBeside={(e, ctx) => (
+    <ul className="rail" data-vitrina-line="">
+      {(e.data as Item).thumbs.map((src, n) => (
+        <li key={src}>
+          {/* The first thumb is OUR copy of the object: hidden until the clone lands. */}
+          <img src={src} alt="" style={n === 0 && !ctx.objectSettled ? { opacity: 0 } : undefined} />
+        </li>
+      ))}
+    </ul>
+  )}
+  renderDetail={(e) => (
+    <div>
+      <h2 data-vitrina-line="">{(e.data as Item).name}</h2>
+      <strong data-vitrina-line="">{(e.data as Item).price}</strong>
+    </div>
+  )}
+  renderBelow={(_, ctx) => (
+    <footer data-vitrina-line="" style={{ marginTop: 'auto' }}>
+      <button onClick={() => ctx.step(-1)}>←</button>
+      <button onClick={() => ctx.step(1)}>→</button>
+    </footer>
+  )}
+  renderClose={(ctx) => (
+    <button className="close" onClick={ctx.close} aria-label={labels.closeDetail}>×</button>
+  )}
+/>
+```
+
+```css
+[data-vitrina-root] {
+  --vitrina-panel-size: 100%;
+  --vitrina-panel-fixed-inset: 64px 20px 24px; /* the band the ✕ occupies */
+}
+.close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+@media (min-width: 640px) {
+  [data-vitrina-root] {
+    --vitrina-panel-size: 50%;
+    --vitrina-panel-fixed-inset: 32px 28px 28px;
+  }
+  .close {
+    top: 16px;
+    right: -20px; /* sticks past the seam: the fixed region is outside the mask */
+  }
+}
+```
+
 ## Detail content entrance (`data-vitrina-line`)
 
-The detail panel's content is yours (`renderDetail`), so the library cannot animate
-markup whose structure it does not know. Mark the blocks you want choreographed with
-`data-vitrina-line`:
+The detail panel's content is yours (the render props above), so the library cannot
+animate markup whose structure it does not know. Mark the blocks you want
+choreographed with `data-vitrina-line` — in any hole:
 
 ```tsx
 renderDetail={(entity) => (
@@ -263,9 +436,11 @@ renderDetail={(entity) => (
 - **Open:** the card is uncovered first; then the lines enter staggered (opacity plus a
   short rise), in document order, while the object flies in alongside — the text never
   waits for the landing.
-- **Switching objects with the panel open** re-runs the entrance for the new content;
-  the panel itself does not move, and the content is never remounted (no `key`), so a
-  crossfade you run on it survives.
+- **Switching objects with the panel open** re-runs the entrance for the new content —
+  every hole that receives the entity (`renderAbove`, `renderBeside`, `renderDetail`,
+  `renderBelow`). The panel itself does not move, and the content is never remounted
+  (no `key`), so a crossfade you run on it survives. Lines in `renderClose`'s fixed
+  region are entity-blind: they enter with the panel once and never re-arm.
 - **Close** plays the same animation mirrored — inverted order, a tighter step, since
   its only job is avoiding a flat blink — and the panel unmounts only when the last
   line has finished.

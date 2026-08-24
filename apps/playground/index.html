@@ -9,18 +9,82 @@
        the THEME's since step 7 (main.tsx injects paper/void); what remains here is
        playground layout only. -->
   <style>
-    [data-vitrina-panel-card] {
-      padding: 24px;
+    /*
+     * The library ships NO breakpoints: how much the panel covers, where the ✕
+     * sits, and how much band the content reserves for it are the consumer's
+     * media queries on the library's tokens. The size/inset tokens are emitted
+     * by main.tsx from the config panel (media query included in the catálogo
+     * preset); what stays here is position-only layout.
+     */
+
+    /* The object row: thumbnail rail beside the object, object centred in the
+       leftover space. */
+    [data-vitrina-panel-row] {
+      align-items: center;
+      gap: 16px;
     }
     [data-vitrina-slot] {
       margin: 0 auto;
     }
-    /* The library's controls are unstyled on purpose; the consumer places them. */
+
+    /* The ✕ lives in the library's fixed region (it can never scroll away);
+       WHERE it sits is ours. ≥640px it sticks out past the seam — the fixed
+       region is outside the card's mask, so it is not cut into a crescent —
+       keyed on the side attribute the library stamps (left panel: seam on the
+       right; right panel: mirrored). Under 640px (and for top/bottom) it sits
+       in the top-right corner. */
+    .pg-close {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 40px;
+      height: 40px;
+      border-radius: 999px;
+      border: 1px solid currentColor;
+      background: var(--vitrina-panel-surface, transparent);
+      color: inherit;
+      font: inherit;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    @media (min-width: 640px) {
+      [data-vitrina-panel-side='left'] .pg-close {
+        top: 16px;
+        right: -20px;
+      }
+      [data-vitrina-panel-side='right'] .pg-close {
+        top: 16px;
+        left: -20px;
+        right: auto;
+      }
+    }
+
+    .pg-rail {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .pg-rail button {
+      width: 48px;
+      height: 48px;
+      border: 1px solid currentColor;
+      border-radius: 8px;
+      background: transparent;
+      color: inherit;
+      font-size: 24px;
+      cursor: pointer;
+    }
+
+    /* The library's controls are unstyled on purpose; the consumer places them.
+       No z-index here: the strip sits on the library's own rung
+       (--vitrina-z-controls) — above the plane's objects, behind the panel. */
     [data-vitrina-controls] {
       position: fixed;
       bottom: 12px;
       left: 12px;
-      z-index: 100;
       display: flex;
       gap: 8px;
     }

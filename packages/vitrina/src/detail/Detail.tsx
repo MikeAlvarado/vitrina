@@ -35,14 +35,18 @@
  * emits the panel alone, which is inert markup, and the flight is a client-only
  * concern anyway (there is no flight without an interaction).
  *
- * The panel is three nested boxes (§ panel entrance): the panel WRAPPER (stable,
- * `pointer-events: auto`, holds any chrome that sticks past the edge), the CARD
- * (the surface — it carries the wipe and IS the only scroll container), and the
- * slot + content. The mask and the scroll both live on the card: a clip-path on
- * the wrapper would cut a sticking-out sibling into a crescent, and declaring
- * `overflow-y` couples `overflow-x` to `auto` and clips it too.
+ * The panel is nested boxes (§ panel entrance): the panel WRAPPER (stable,
+ * `pointer-events: auto`, sized and positioned by `panelSide` +
+ * `--vitrina-panel-size`), the CARD (the surface — it carries the wipe and IS
+ * the only scroll container), and inside it the CONTENT COLUMN — the composable
+ * order the library dictates: renderAbove, the object row (renderBeside beside
+ * the slot), renderDetail's box, renderBelow. The mask and the scroll both live
+ * on the card: a clip-path on the wrapper would cut a sticking-out sibling into
+ * a crescent, and declaring `overflow-y` couples `overflow-x` to `auto` and
+ * clips it too. `renderClose` mounts in the FIXED region — the card's sibling,
+ * outside the scroll and outside the mask — so the exit can never scroll away.
  *
- * The content is `renderDetail`'s, rendered for the ACTIVE entity and NEVER keyed
+ * The content is the consumer's, rendered for the ACTIVE entity and NEVER keyed
  * by id: a remount would kill any crossfade the consumer runs on it (the old text
  * would vanish in the same commit the new arrives). `active` flips to the new
  * entity the moment a relay starts, so the content crosses over on its own, not
@@ -56,6 +60,7 @@ import type {
   VitrinaDetailContext,
   VitrinaEntity,
   VitrinaLabels,
+  VitrinaPanelSide,
   VitrinaProps,
   VitrinaView,
 } from '../types';
@@ -74,6 +79,12 @@ export interface DetailProps {
   /** Whether the panel plays its entrance/exit wipe this commit. */
   panelAnim: PanelAnim;
   view: VitrinaView;
+  /** Which edge the panel occupies. Positioning and the wipe's direction are base.css's, off the attribute. */
+  side: VitrinaPanelSide;
+  /** Which side of the object `renderBeside` sits on in the row. */
+  besidePlacement: 'start' | 'end';
+  /** Marks the dialog aria-modal; the focus trap itself is the orchestrator's. */
+  modal: boolean;
   /** The previous object flying home (the relay layer), or null. */
   relayEntity: VitrinaEntity | null;
   relayInstanceId: string | null;
@@ -87,7 +98,11 @@ export interface DetailProps {
    */
   portalReady: boolean;
   renderObject: VitrinaProps['renderObject'];
+  renderAbove: VitrinaProps['renderAbove'];
+  renderBeside: VitrinaProps['renderBeside'];
   renderDetail: VitrinaProps['renderDetail'];
+  renderBelow: VitrinaProps['renderBelow'];
+  renderClose: VitrinaProps['renderClose'];
   labels: VitrinaLabels;
   detailContext: VitrinaDetailContext;
   panelRef: RefObject<HTMLDivElement | null>;
@@ -113,12 +128,19 @@ export function Detail({
   copy,
   panelAnim,
   view,
+  side,
+  besidePlacement,
+  modal,
   relayEntity,
   relayInstanceId,
   relayFlying,
   portalReady,
   renderObject,
+  renderAbove,
+  renderBeside,
   renderDetail,
+  renderBelow,
+  renderClose,
   labels,
   detailContext,
   panelRef,
@@ -172,36 +194,66 @@ export function Detail({
     </div>
   );
 
+  /*
+    The active object's copy is always in the DOM so the slot can be measured
+    as the flight's destination (a `display: none` box has no rect); shown only
+    while it is the one visible copy.
+  */
+  const slot = (
+    <div
+      ref={slotRef}
+      data-vitrina-slot=""
+      style={{ visibility: copy === 'panel' ? 'visible' : 'hidden' }}
+    >
+      {renderObject(entity, objectContext)}
+    </div>
+  );
+
   return (
     <>
       <div data-vitrina-detail="" data-vitrina-panel-phase={panel}>
         <div
           ref={panelRef}
           data-vitrina-panel=""
+          data-vitrina-panel-side={side}
           data-vitrina-panel-phase={panel}
           data-vitrina-panel-anim={panelAnim}
           // Same reason as the plane viewport: a nested scroller Lenis does not
           // know about loses its wheel. Inert without Lenis.
           data-lenis-prevent=""
           role="dialog"
+          aria-modal={modal ? 'true' : undefined}
           aria-label={labels.objectLabel(entity)}
           tabIndex={-1}
         >
           <div ref={cardRef} data-vitrina-panel-card="">
             {/*
-              The active object's copy is always in the DOM so the slot can be
-              measured as the flight's destination (a `display: none` box has no
-              rect); shown only while it is the one visible copy.
+              The composable column, order the library's: above, the object row
+              (beside on the placement side), the detail box, below. The holes'
+              nodes are DIRECT flex children of the column, so the consumer's
+              own flex tricks (margin-top: auto on renderBelow's root) work
+              without reaching into library boxes.
             */}
-            <div
-              ref={slotRef}
-              data-vitrina-slot=""
-              style={{ visibility: copy === 'panel' ? 'visible' : 'hidden' }}
-            >
-              {renderObject(entity, objectContext)}
+            <div data-vitrina-panel-content="">
+              {renderAbove?.(entity, detailContext)}
+              <div data-vitrina-panel-row="">
+                {besidePlacement === 'start' && renderBeside?.(entity, detailContext)}
+                {slot}
+                {besidePlacement === 'end' && renderBeside?.(entity, detailContext)}
+              </div>
+              <div data-vitrina-detail-content="">{renderDetail?.(entity, detailContext)}</div>
+              {renderBelow?.(entity, detailContext)}
             </div>
-            <div data-vitrina-detail-content="">{renderDetail?.(entity, detailContext)}</div>
           </div>
+          {/*
+            The fixed region: renderClose's home, a SIBLING of the card — outside
+            the scroll container (it can never scroll away) and outside the
+            card's clip-path (chrome may stick past the seam). Position within it
+            is the consumer's; that it does not scroll is the library's.
+          */}
+          {renderClose ? (
+            <div data-vitrina-panel-fixed="">{renderClose(detailContext)}</div>
+          ) : null}
         </div>
       </div>
 

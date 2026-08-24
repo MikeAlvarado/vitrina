@@ -225,7 +225,26 @@ describe('teardown — nothing GSAP survives the plane', () => {
   });
 
   it('opening, closing, relaying to another, and unmounting mid-flight leaves nothing live', async () => {
-    const { host, root } = await mountStrict({ children: <Probe /> });
+    /*
+     * Every panel hole filled, each carrying a data-vitrina-line: the lines are
+     * what the panel-lifecycle and re-arm contexts tween, so a leak in either
+     * shows up here as a surviving Element tween. renderClose adds the fixed
+     * region (entrance/exit only), the others the re-arming column.
+     */
+    const { host, root } = await mountStrict({
+      children: <Probe />,
+      props: {
+        renderAbove: (e) => <div data-vitrina-line="">{`code-${e.id}`}</div>,
+        renderBeside: () => <div data-vitrina-line="">rail</div>,
+        renderDetail: (e) => <p data-vitrina-line="">{e.id}</p>,
+        renderBelow: () => <footer data-vitrina-line="">foot</footer>,
+        renderClose: (ctx) => (
+          <button type="button" data-vitrina-line="" onClick={ctx.close}>
+            ×
+          </button>
+        ),
+      },
+    });
     const nodes = nodesOf(host);
     landTimeline();
     // Two revealed objects of DIFFERENT entities (same-entity opens are no-ops).
@@ -250,14 +269,23 @@ describe('teardown — nothing GSAP survives the plane', () => {
     landUntilSettled(host);
     expect(detailOf(host).layer).toBeNull();
 
-    // Open another, relay to a different one mid-flight, and unmount with a flight
-    // (and the relay) still in the air.
+    // Open another, relay to a different one mid-flight, and unmount with a
+    // flight (and the relay) still in the air.
     act(() => second.click());
+    // The holes' lines are animated from the click's own commit: held at 0,
+    // staggering in behind the wipe — live tweens the unmount must kill.
+    const lines = Array.from(document.querySelectorAll('[data-vitrina-line]'));
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.flatMap(tweensOn).length).toBeGreaterThan(0);
     landTimeline(); // reveal → second flies in
-    act(() => first.click()); // relay: first swaps in, second flies home
+    act(() => first.click()); // parked: second is still mid-flight
     const flightB = detailOf(host).flight;
     const relayB = detailOf(host).relay;
     if (!flightB || !relayB) throw new Error('no flight/relay visual');
+    landTimeline(); // second lands → the parked request drains: second relays home
+    expect(tweensOn(relayB)).toHaveLength(1);
+    // The drained swap re-armed the column's lines: the stagger is live again.
+    expect(lines.flatMap(tweensOn).length).toBeGreaterThan(0);
     const flying = [flightA, flightB, relayB, ...nodesOf(host)];
     expect(flying.flatMap(tweensOn).length).toBeGreaterThan(0);
 
@@ -265,6 +293,7 @@ describe('teardown — nothing GSAP survives the plane', () => {
 
     expect(liveAnimationCount()).toEqual(NOTHING_LIVE);
     expect(flying.flatMap(tweensOn)).toHaveLength(0);
+    expect(lines.flatMap(tweensOn)).toHaveLength(0);
     expect(liveDraggables(nodes)).toBe(0);
     expect(enabledDraggables()).toHaveLength(0);
   });
