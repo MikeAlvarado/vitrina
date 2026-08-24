@@ -16,8 +16,10 @@ need rewriting on a rename — a rename must stay a single find-and-replace.
 
 - **The library owns the mechanic, never the content.** No product data, no copy, no
   strings, no domain concepts in `src/`. A field named `price`/`name`/`descriptor` in a
-  library type is a bug. All user-visible strings arrive via the `labels` prop
-  (aria-labels only — the library renders no visible text).
+  library type is a bug. All user-visible strings arrive via the `labels` prop — the
+  core renders them as aria-labels only; the ONE place a label renders as visible text
+  is `<VitrinaControls>`'s buttons (opt-in chrome, and the words are still the
+  consumer's).
 - **Entities vs instances.** Entities are what exists; instances are where copies appear.
   The detail panel keys off `entityId`; instance ids follow `${entityId}-${n}`.
 - **`Math.random()` anywhere in `src/` is a bug.** All randomness flows from the seeded
@@ -254,17 +256,19 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
 - The wipe is CSS keyframes (runs on the commit the card mounts), keyed on
   `data-vitrina-panel-anim` (`reveal`/`cover`/`none`) — set from the PANEL phase, `none`
   on every relay, so switching the active object never re-wipes.
-- `src/styles/base.css` exists from this step: the focus rules (native ring suppressed
-  with `outline: 2px solid transparent` — `none` vanishes under forced colours too — and
-  drawn back on `:focus-visible`, because a programmatic `.focus()` matches it in
-  Chrome; both in the stylesheet, an inline `outline: none` would beat the ring), the
-  panel wipe keyframes, and the custom properties — the stacking scale
-  (`--vitrina-z-plane/panel/flight`) and the motion tokens.
-- **All durations/curves come from CSS variables** — `--vitrina-dur-flight`,
-  `--vitrina-dur-panel`, the line staggers, the two eases — read at runtime
-  (`readSeconds`) with the `defaults.ts` constants as the SSR/jsdom fallback only. No
-  animation numbers in the component. Setting `--vitrina-dur-flight` to 2s in devtools
-  plays the whole choreography in deliberate slow motion.
+- `src/styles/base.css` exists from this step (and since step 7 is the FULL structural
+  stylesheet, see below): the focus rules (native ring suppressed with `outline: 2px
+  solid transparent` — `none` vanishes under forced colours too — and drawn back on
+  `:focus-visible`, because a programmatic `.focus()` matches it in Chrome; both in the
+  stylesheet, an inline `outline: none` would beat the ring), the panel wipe keyframes,
+  and the custom properties — the stacking scale (`--vitrina-z-plane/panel/flight`) and
+  the motion tokens.
+- **All durations/curves come from CSS variables**, read ONCE at mount
+  (`readMotionTokens` in `src/motion.ts` — one `getComputedStyle` on the root, never a
+  read per frame) with the `defaults.ts` constants as the SSR/jsdom fallback only. No
+  animation numbers in the component. Retuning a token applies on the next MOUNT — the
+  playground's "2s flight" toggle remounts (`key`) with `--vitrina-dur-flight: 2s` to
+  play the whole choreography in deliberate slow motion.
 - Two things on the card's CSS are load-bearing, not styling: `scrollbar-gutter:
   stable` (with a classic scrollbar the width is reserved only once the content needs
   it; if the height crosses that threshold MID-ANIMATION the scrollbar appears and
@@ -313,6 +317,51 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
 - A panel MOUNTED already open (`defaultActiveId`, controlled id on hydrate) plays no
   entrance — `prevPanelRef` starts at the mount phase, not `'closed'`; animating there
   would flash server-rendered content out and back in.
+
+## base.css, themes, controls, reduced motion (step 7)
+
+- **base.css is the structural stylesheet and MANDATORY** (`vitrina/styles.css`): layer
+  positioning, the z scale, overflow (both axes ALWAYS explicit), transform-origin,
+  touch-action, the focus-ring geometry, the wipe keyframes, every token. Components
+  keep inline styles ONLY for runtime values (world size, instance boxes, GSAP-owned
+  transforms, `visibility`). Zero color in base.css. The DOM tests assert structure
+  against the stylesheet TEXT (`tests/css.ts`): jsdom does not cascade attribute-selector
+  rules into `getComputedStyle` reliably — and inside that helper never use
+  `new URL(x, import.meta.url)`: Vite rewrites that exact pattern into an asset URL on
+  the (jsdom) page origin; resolve a path with `fileURLToPath` instead.
+- **The motion tokens are read ONCE at mount** into a ref; `motion()` feeds every tween.
+  The ease tokens (`--vitrina-ease-micro`, `--vitrina-ease-flight`) hold GSAP ease
+  STRINGS — GSAP core does not parse `cubic-bezier()`; the wipe's curves stay CSS timing
+  functions (`--vitrina-panel-ease-in/out`). `--vitrina-dur-micro` = wheel chase,
+  `--vitrina-dur-ui` = zoom step, plus the flight/panel durations and line staggers.
+- **will-change is put on and taken off, NEVER permanent** — a forever-promoted layer
+  squats on GPU memory. Pan layer: promoted on press / first wheel tick, demoted when
+  drag, throw and both chase tweens are all at rest (each quickTo's `onComplete` checks
+  the other). Zoom layer: around its tween. Flight visuals: in the park/fly `gsap.set`s,
+  stripped by their context's revert. No stylesheet declares will-change (pinned by
+  `tests/styles.test.ts`).
+- **Reduced motion in CSS keys on the root ATTRIBUTE `data-vitrina-reduced`, never the
+  media query**: the `reducedMotion` prop arbitrates and `'ignore'` must animate with
+  the preference on — a media query would overrule it silently. The orchestrator stamps
+  the attribute when reduction is effective; the tab-order pass runs identically in all
+  three modes.
+- **Themes: `paper.css` is the factory default** (palette measured on the reference's
+  live site: `#f5f6ee` paper, `#222` ink, `#a1a19c` grey; dark diffuse drop-shadow under
+  each object), **`void.css` the dark one** (`#08080A` page — not pure black, it bands —
+  no shadow, a light halo). Both define the SAME token set on `[data-vitrina-root]`
+  (page, ink, muted, focus, panel-surface, seam, object-shadow) plus the paint that
+  consumes it; a consumer imports exactly ONE. The object treatment is `drop-shadow`
+  (follows the cut-out alpha, not the box) and the COMPLETE filter value lives in one
+  token — composing `drop-shadow()` lists across tokens is how shadows silently die.
+  Every copy of an object (plane instance, grid card, panel slot, both flight visuals)
+  gets the same filter, so nothing changes weight mid-flight.
+- **`<VitrinaControls>`: exactly three buttons** — zoom out, zoom in, view toggle — over
+  `useVitrina()` (`api.labels` passes the strings through; ends disable their zoom
+  button; the toggle renames itself `toGrid`/`toPlane`). Renders `null` under
+  `viewLocked` — all three would be no-ops. `labels.closeDetail` remains for the
+  consumer's own close control; neither the panel shell nor the controls render one.
+- Draggable gets `cursor: 'grab'` / `activeCursor: 'grabbing'` explicitly: its default
+  writes an inline `cursor: move` on the trigger that would beat the stylesheet.
 
 ## GSAP lifecycle gotchas (§6.7)
 
@@ -496,7 +545,7 @@ packages/vitrina test|typecheck|build`.
      against `framePass`; reveal rhythm / intro feel still need the real-browser check
 - [ ] 5. Grid view + Flip toggle — code complete, gate green (`tests/view.test.tsx`,
      teardown across repeated toggles); the flight itself needs the real-browser check
-     (the playground has no toggle by design — the demo's controls will)
+     (since step 7 the playground mounts `<VitrinaControls>`, which has the toggle)
 - [ ] 6. Detail panel + object state machine, panel/object lifecycles DECOUPLED
      (panel uncovers once, covers once, holds still across object swaps), configurable
      open collision (serialize/crossfade), panel entrance wipe, between-objects height
@@ -528,10 +577,33 @@ packages/vitrina test|typecheck|build`.
      + overflow-x on the card).
      **Reconsider whether crossfade still earns its place:** with the panel now still,
      serialize may feel complete on its own — a real-browser call, per the prompt.
-- [ ] 7. Themes, `base.css`, `<VitrinaControls>`, reduced-motion paths
-     (note: `package.json` exports already reference `dist/*.css` — `base.css` exists
-     since step 6 with the focus rules only and the build copies it; the themes do not,
-     so `npm pack` is not truthful until then)
+- [ ] 7. Themes, `base.css`, `<VitrinaControls>`, reduced-motion paths — code complete,
+     gate green (`tests/styles.test.ts` pins base.css structural/colorless/no-will-change
+     and the theme token parity; `tests/controls.test.tsx` pins the three buttons, the
+     `'grid'` lock, the three modes, identical tab order, and will-change on/off around
+     the zoom tween; the build copies all three CSS files to dist, so the exports map —
+     and `npm pack` — is truthful now). Real-browser checks still pending:
+     - paper (default) and void via the playground's theme switch: plane on paper with
+       the dark diffuse shadow under each object / void with the halo; the panel seam;
+       the SAME weight on the object across plane → flight → slot (the filter rides
+       every copy).
+     - will-change actually toggling in devtools (pan layer during drag/wheel only,
+       zoom layer during the step, flight visuals during park/fly) — nothing promoted
+       at rest.
+     - the three `reducedMotion` modes with the OS preference REALLY on (System
+       Settings → Accessibility → Display → Reduce motion), not simulated from
+       devtools: 'respect' = no intro/pops/inertia/staggers but drag, wheel, zoom,
+       toggle and panel all alive; 'grid' = locked grid, controls render nothing;
+       'ignore' = full motion. Tab order identical in all three.
+     - `<VitrinaControls>` in the playground (bottom-left): zoom ends disable, toggle
+       renames, focus ring on keyboard only.
+     Already smoke-checked in a live tab (static wiring only — the automated tab
+     freezes rAF, so nothing about feel): both themes paint and swap, the object
+     drop-shadow/halo applies, controls render the label texts and inherit the theme
+     ink (the fix that came out of this check: themes set `color` on the ROOT, not
+     only on the views — otherwise chrome inside the root inherits the page's), pan
+     layer at `will-change: auto` at rest, viewport `cursor: grab` + `touch-action:
+     none` + z 10 from the stylesheet.
 - [ ] 8. Build config, exports map, SSR test, README; `npm pack` → install tarball into
      scratch Vite app **before** writing the demo
 - [ ] 9. `apps/demo` (Vite + React + TS, void theme, minerals + emoji datasets)

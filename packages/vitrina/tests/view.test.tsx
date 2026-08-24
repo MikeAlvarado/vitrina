@@ -12,6 +12,7 @@ import { gsap } from 'gsap';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { VitrinaObjectContext } from '../src';
+import { cssDecl } from './css';
 import {
   Probe,
   currentApi,
@@ -71,10 +72,11 @@ describe('grid view', () => {
     // The only text is what renderObject rendered.
     expect(region?.textContent).toBe(entities.map((e) => e.id).join(''));
 
-    // Decoupled overflow axes: a native scroll-into-view can never hand it a scrollLeft.
-    const style = getComputedStyle(region as Element);
-    expect(style.overflowY).toBe('auto');
-    expect(style.overflowX).toBe('hidden');
+    // Decoupled overflow axes (base.css owns the structure since step 7): a
+    // native scroll-into-view can never hand it a scrollLeft.
+    expect(cssDecl('[data-vitrina-grid]', 'overflow-y')).toBe('auto');
+    expect(cssDecl('[data-vitrina-grid]', 'overflow-x')).toBe('hidden');
+    expect(cssDecl('[data-vitrina-grid]', 'scrollbar-gutter')).toBe('stable');
 
     await act(async () => root.unmount());
   });

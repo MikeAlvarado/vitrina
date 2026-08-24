@@ -1,0 +1,58 @@
+/*
+ * vitrina — paper theme. The FACTORY DEFAULT: a bare install with base.css plus
+ * this file reads as a working plane on paper, a dark diffuse shadow under each
+ * cut-out object. Palette measured on the interaction reference's live site
+ * (its swatches: light, dark, grey — see the values below).
+ *
+ * Import exactly ONE theme. Both themes define the SAME token set on
+ * [data-vitrina-root], so swapping is a one-line change; the flight portal is
+ * stamped data-vitrina-root too, so the flying copy resolves the same values on
+ * body. Structure lives in base.css — a theme is tokens plus the paint that
+ * consumes them, nothing else.
+ */
+
+[data-vitrina-root] {
+  /* Ink on the root, not only on the views: consumer chrome inside the root
+     (controls included) inherits a legible color instead of the page's. */
+  color: var(--vitrina-ink);
+
+  --vitrina-page: #f5f6ee;
+  --vitrina-ink: #222222;
+  --vitrina-muted: #a1a19c;
+  --vitrina-focus: #222222;
+  --vitrina-panel-surface: #f5f6ee;
+  --vitrina-seam: #a1a19c;
+  /*
+   * The COMPLETE filter value in ONE token — composing drop-shadow() lists
+   * across tokens is where shadows silently die (the browser drops the whole
+   * `filter` declaration with no error, and a missing shadow looks a lot like a
+   * subtle one). drop-shadow, not box-shadow: it follows the object's cut-out
+   * alpha, not its box.
+   */
+  --vitrina-object-shadow: drop-shadow(0 2px 4px rgba(34, 34, 34, 0.16))
+    drop-shadow(0 18px 32px rgba(34, 34, 34, 0.28));
+}
+
+[data-vitrina-viewport],
+[data-vitrina-grid] {
+  background: var(--vitrina-page);
+  color: var(--vitrina-ink);
+}
+
+/* Every copy of an object casts the same shadow: the plane instance, the grid
+   card, the panel's slot copy, and both flying visuals — so nothing changes
+   weight mid-flight. */
+[data-vitrina-object],
+[data-vitrina-slot],
+[data-vitrina-flight],
+[data-vitrina-relay] {
+  filter: var(--vitrina-object-shadow);
+}
+
+/* The card is the surface the wipe uncovers; the seam keeps it legible against
+   a same-colored plane. The border rides the card, so the mask clips it too. */
+[data-vitrina-panel-card] {
+  background: var(--vitrina-panel-surface);
+  color: var(--vitrina-ink);
+  border-left: 1px solid var(--vitrina-seam);
+}

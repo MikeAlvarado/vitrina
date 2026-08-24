@@ -18,6 +18,8 @@ export type {
 } from './types';
 
 export { Vitrina } from './Vitrina';
+export { VitrinaControls } from './VitrinaControls';
+export type { VitrinaControlsProps } from './VitrinaControls';
 export { useVitrina } from './context';
 export { generateInstances } from './layout/generate';
 export { DEFAULT_LAYOUT, resolveLayout } from './defaults';

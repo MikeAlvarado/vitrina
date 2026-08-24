@@ -26,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { VitrinaDetailContext, VitrinaObjectContext } from '../src';
 import { DETAIL_LINE_STAGGER_EXIT_SECONDS, DETAIL_PANEL_SECONDS } from '../src/defaults';
+import { cssDecl } from './css';
 import {
   Probe,
   SLOT,
@@ -110,7 +111,7 @@ describe('a single open: panel reveals, then the object flies in', () => {
     // The panel is up and revealing; the object is PARKED on the flight layer,
     // above the panel, at its origin's box — so the panel never covers it. Its
     // plane instance is hidden, the slot is hidden, and there is no tween yet.
-    const { layer, panel, card, slot, flight, flightLayer, relayLayer, content } = detailOf(host);
+    const { layer, panel, slot, flight, flightLayer, relayLayer, content } = detailOf(host);
     expect(detailOf(host).panelPhase).toBe('open');
     expect(detailOf(host).panelAnim).toBe('reveal');
     expect(currentApi().activeId).toBe(entityId);
@@ -126,35 +127,45 @@ describe('a single open: panel reveals, then the object flies in', () => {
     expect(Math.abs(parseFloat((flight as HTMLElement).style.left) - parseFloat(origin.style.left))).toBeLessThan(1);
 
     // The shell: a non-modal dialog named after the entity, focused, its only text
-    // the consumer's; pointer-events none on the layers, auto on the panel.
+    // the consumer's; pointer-events none on the layers, auto on the panel. The
+    // structure lives in base.css since step 7, so those are asserted against the
+    // shipped stylesheet — the DOM side is the attribute each node carries.
     expect(panel?.getAttribute('role')).toBe('dialog');
     expect(panel?.hasAttribute('aria-modal')).toBe(false);
     expect(panel?.getAttribute('aria-label')).toBe(labels.objectLabel({ id: entityId }));
     expect(content?.textContent).toBe('detail');
     expect(document.activeElement).toBe(panel);
-    expect(layer?.style.pointerEvents).toBe('none');
-    expect(flightLayer?.style.pointerEvents).toBe('none');
-    expect(relayLayer?.style.pointerEvents).toBe('none');
-    expect(panel?.style.pointerEvents).toBe('auto');
-    // Stacking scale, all tokens (no bare numbers): the plane on the floor, the
-    // panel above it, the flight above the panel. The flight token lives on the
-    // PORTAL WRAPPER — the node that competes against the panel in the document's
-    // root context — while the inner flight/relay layers carry none.
-    const viewport = host.querySelector<HTMLElement>('[data-vitrina-viewport]');
-    const flightPortal = document.querySelector<HTMLElement>('[data-vitrina-flight-portal]');
-    expect(viewport?.style.zIndex).toContain('var(--vitrina-z-plane');
-    expect(layer?.style.zIndex).toContain('var(--vitrina-z-panel');
-    expect(flightPortal?.style.zIndex).toContain('var(--vitrina-z-flight');
+    expect(layer).not.toBeNull();
+    expect(flightLayer).not.toBeNull();
+    expect(relayLayer).not.toBeNull();
+    expect(cssDecl('[data-vitrina-detail]', 'pointer-events')).toBe('none');
+    expect(cssDecl('[data-vitrina-flight-layer]', 'pointer-events')).toBe('none');
+    expect(cssDecl('[data-vitrina-relay-layer]', 'pointer-events')).toBe('none');
+    expect(cssDecl('[data-vitrina-panel]', 'pointer-events')).toBe('auto');
+    // Stacking scale, all tokens (no bare numbers in any rule the nodes match):
+    // the plane on the floor, the panel above it, the flight above the panel. The
+    // flight token lives on the PORTAL WRAPPER — the node that competes against
+    // the panel in the document's root context — while the inner flight/relay
+    // layers carry none, in the stylesheet or inline.
+    expect(cssDecl('[data-vitrina-viewport]', 'z-index')).toBe('var(--vitrina-z-plane)');
+    expect(cssDecl('[data-vitrina-detail]', 'z-index')).toBe('var(--vitrina-z-panel)');
+    expect(cssDecl('[data-vitrina-flight-portal]', 'z-index')).toBe('var(--vitrina-z-flight)');
+    expect(cssDecl('[data-vitrina-flight-layer]', 'z-index')).toBeNull();
+    expect(cssDecl('[data-vitrina-relay-layer]', 'z-index')).toBeNull();
     expect(flightLayer?.style.zIndex).toBe('');
     expect(relayLayer?.style.zIndex).toBe('');
     // The flying visuals themselves carry no z-index either — ranking never rides
     // on Flip's transient boost.
+    expect(cssDecl('[data-vitrina-flight]', 'z-index')).toBeNull();
     expect(flight?.style.zIndex).toBe('');
     expect(detailOf(host).relay?.style.zIndex).toBe('');
-    // Scroll + mask on the card, not the wrapper.
-    expect(card?.style.overflowY).toBe('auto');
-    expect(card?.style.overflowX).toBe('hidden');
-    expect(panel?.style.overflowY).toBe('');
+    // Scroll + mask on the card, not the wrapper — both overflow axes explicit.
+    expect(cssDecl('[data-vitrina-panel-card]', 'overflow-y')).toBe('auto');
+    expect(cssDecl('[data-vitrina-panel-card]', 'overflow-x')).toBe('hidden');
+    expect(cssDecl('[data-vitrina-panel-card]', 'scrollbar-gutter')).toBe('stable');
+    expect(cssDecl('[data-vitrina-panel-card]', 'clip-path')).toBe('inset(0)');
+    expect(cssDecl('[data-vitrina-panel]', 'overflow-y')).toBeNull();
+    expect(cssDecl('[data-vitrina-panel]', 'clip-path')).toBeNull();
 
     // The reveal delayedCall fires → the object flies into a card that has stopped
     // growing. Now the flight is live and the instance is hidden.
@@ -163,7 +174,7 @@ describe('a single open: panel reveals, then the object flies in', () => {
     expect(hidden(origin)).toBe(true);
     expect(hidden(detailOf(host).flight)).toBe(false);
     const fl = detailOf(host).flight as HTMLElement;
-    expect(fl.style.position).toBe('fixed');
+    expect(cssDecl('[data-vitrina-flight]', 'position')).toBe('fixed');
     expect(fl.style.left).toBe(`${SLOT.x}px`);
     const originLeft = parseFloat(origin.style.left);
     const originSize = parseFloat(origin.style.width);
@@ -197,31 +208,36 @@ describe('a single open: panel reveals, then the object flies in', () => {
     expect(host.contains(portal)).toBe(false);
     expect(host.contains(detailOf(host).flight)).toBe(false);
     expect(host.contains(detailOf(host).panel)).toBe(true);
-    expect(portal?.style.position).toBe('fixed'); // resolved against the viewport, no transformed ancestor
+    // Resolved against the viewport, no transformed ancestor (base.css).
+    expect(cssDecl('[data-vitrina-flight-portal]', 'position')).toBe('fixed');
 
     // The z-index that decides panel-vs-flight lives on the nodes that actually
     // COMPETE in the document's root stacking context: the panel LAYER (inside the
     // no-context root, so it emerges) and the PORTAL WRAPPER (fixed, on body). The
     // token must sit on those, not on an inner layer that could never escape its
-    // parent's level. Assert the token AND its numeric fallback so the ranking
-    // holds even with no stylesheet loaded.
-    const zVar = (el: HTMLElement | null) => {
-      const m = /var\(--vitrina-z-(\w+),\s*(\d+)\)/.exec(el?.style.zIndex ?? '');
-      if (!m) throw new Error(`no z token on ${el?.outerHTML.slice(0, 60)}`);
-      return { name: m[1], fallback: Number(m[2]) };
-    };
-    const plane = zVar(host.querySelector<HTMLElement>('[data-vitrina-viewport]'));
-    const panel = zVar(detailOf(host).layer);
-    const flight = zVar(portal); // the wrapper carries --vitrina-z-flight
-    expect([plane.name, panel.name, flight.name]).toEqual(['plane', 'panel', 'flight']);
-    expect(plane.fallback).toBeLessThan(panel.fallback);
+    // parent's level. Since step 7 base.css is mandatory and owns both the tokens
+    // and their placement: assert each competitor consumes its token and that the
+    // token VALUES rank plane < panel < flight.
+    expect(cssDecl('[data-vitrina-viewport]', 'z-index')).toBe('var(--vitrina-z-plane)');
+    expect(cssDecl('[data-vitrina-detail]', 'z-index')).toBe('var(--vitrina-z-panel)');
+    expect(cssDecl('[data-vitrina-flight-portal]', 'z-index')).toBe('var(--vitrina-z-flight)');
+    // The root itself must never create a stacking context, or the panel gets
+    // trapped inside it and the comparison above breaks.
+    expect(cssDecl('[data-vitrina-root]', 'z-index')).toBeNull();
+    expect(cssDecl('[data-vitrina-root]', 'transform')).toBeNull();
+    expect(cssDecl('[data-vitrina-root]', 'filter')).toBeNull();
+    const zToken = (name: string) => Number(cssDecl('[data-vitrina-root]', `--vitrina-z-${name}`));
+    expect(zToken('plane')).toBeLessThan(zToken('panel'));
     // The flight beats the panel from the first frame — this is the whole fix.
-    expect(panel.fallback).toBeLessThan(flight.fallback);
+    expect(zToken('panel')).toBeLessThan(zToken('flight'));
 
     // The inner flight/relay layers and the flying visuals carry NO z-index of
     // their own — the wrapper owns it — so Flip's transient during-flip boost on
     // an element can never reorder anything. And nothing on the plane raises
     // itself: the active object is hidden while its clone flies, never a layer up.
+    expect(cssDecl('[data-vitrina-flight-layer]', 'z-index')).toBeNull();
+    expect(cssDecl('[data-vitrina-flight]', 'z-index')).toBeNull();
+    expect(cssDecl('[data-vitrina-object]', 'z-index')).toBeNull();
     expect(detailOf(host).flightLayer?.style.zIndex).toBe('');
     expect(detailOf(host).relayLayer?.style.zIndex).toBe('');
     expect(detailOf(host).flight?.style.zIndex).toBe('');

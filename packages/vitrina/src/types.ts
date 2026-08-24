@@ -145,6 +145,12 @@ export interface VitrinaApi {
    */
   openDetail(entityId: string, instanceId?: string | null): void;
   closeDetail(): void;
+  /**
+   * The `labels` prop, passed through so chrome built on this hook
+   * (`<VitrinaControls>`, or the consumer's own) names its controls without
+   * threading the object twice. The strings remain the consumer's.
+   */
+  labels: VitrinaLabels;
 }
 
 export interface VitrinaProps {

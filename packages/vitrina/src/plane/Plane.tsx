@@ -35,7 +35,6 @@
  */
 
 import { useMemo, useReducer, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
 import { gsap } from 'gsap';
 import type { Draggable } from 'gsap/Draggable';
 import type { Observer } from 'gsap/Observer';
@@ -57,13 +56,9 @@ import {
   REVEAL_POP_EASE,
   REVEAL_POP_SECONDS,
   REVEAL_SCALE,
-  VIEW_FLIP_EASE,
   VIEW_FLIP_SECONDS,
-  WHEEL_CHASE_EASE,
-  WHEEL_CHASE_SECONDS,
   WHEEL_SPEED,
   ZOOM_TWEEN_EASE,
-  ZOOM_TWEEN_SECONDS,
 } from '../defaults';
 import { generateInstances } from '../layout/generate';
 import { createRng } from '../layout/rng';
@@ -73,6 +68,7 @@ import {
   useGsapContext,
   useIsomorphicLayoutEffect,
 } from '../gsap';
+import type { GetMotion } from '../motion';
 import type { Session } from '../session';
 import { centerPan, clampPan, panBounds, selectWorld } from './geometry';
 import type { Size } from './geometry';
@@ -107,45 +103,19 @@ export interface PlaneProps {
   onOpen: (entityId: string, instanceId: string) => void;
   /** Registers each object button with the root, by exact instance id. */
   onNode: (instanceId: string, el: HTMLElement | null) => void;
+  /** The motion tokens, read once at the root's mount. */
+  motion: GetMotion;
 }
 
 /*
- * Structural styles are inline because they ARE the mechanic (two transform
- * layers, hidden overflow, touch capture), not theme. Theme — colors, the
- * :focus-visible ring, cursor states — arrives with the compiled CSS in a later
- * step; nothing below depends on it.
+ * All structure — the viewport's clipping, touch capture and stacking rung, the
+ * two transform layers' positioning and the zoom origin at the viewport centre,
+ * the object buttons' reset and focus geometry — lives in base.css, keyed on
+ * the data attributes. Inline here is only what is computed at runtime: the
+ * world's size, each instance's position, and visibility. NO permanent
+ * will-change anywhere: the layers are promoted when a gesture or tween starts
+ * and demoted when it settles (a forever-promoted layer squats on GPU memory).
  */
-const VIEWPORT_STYLE: CSSProperties = {
-  position: 'relative',
-  width: '100%',
-  height: '100%',
-  overflow: 'hidden',
-  touchAction: 'none',
-  cursor: 'grab',
-  // The whole plane sits on ONE stacking rung, below the panel and the flight.
-  // Setting z-index here makes the viewport a stacking context that confines
-  // every object — the active one included — beneath the panel: a dragged object
-  // passing under the panel ducks behind it. No object ever carries its own
-  // z-index; the active one is hidden (visibility) while its clone flies, never
-  // raised. The token is the floor of the scale in base.css.
-  zIndex: 'var(--vitrina-z-plane, 10)',
-};
-
-const ZOOM_LAYER_STYLE: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  transformOrigin: '50% 50%',
-  willChange: 'transform',
-};
-
-const OBJECT_STYLE: CSSProperties = {
-  position: 'absolute',
-  display: 'block',
-  padding: 0,
-  border: 0,
-  background: 'transparent',
-  cursor: 'pointer',
-};
 
 /*
  * Unrevealed = opacity 0 AND pointer-events none (§6.5): invisible but clickable
@@ -169,6 +139,7 @@ export function Plane({
   activeEntityId,
   onOpen,
   onNode,
+  motion,
 }: PlaneProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const zoomLayerRef = useRef<HTMLDivElement>(null);
@@ -536,6 +507,49 @@ export function Plane({
         const bounds = panBounds(world, view, zoomAppliedRef.current);
 
         /*
+         * will-change, put on and taken off (§7): the pan layer is promoted while
+         * a gesture is actually moving it — pointer down, inertia throw, or the
+         * wheel chase — and demoted the moment everything is at rest. Never
+         * permanent: a forever-promoted layer squats on GPU memory for the life
+         * of the page. Skipped under reduced motion (every movement is an
+         * instant set; there is nothing to promote for).
+         */
+        let promoted = false;
+        const promote = () => {
+          if (reduced || promoted) return;
+          promoted = true;
+          gsap.set(panLayer, { willChange: 'transform' });
+        };
+        const demote = () => {
+          if (!promoted) return;
+          if (drag && (drag.isDragging || drag.isThrowing)) return;
+          if (panToX.tween?.isActive() || panToY.tween?.isActive()) return;
+          promoted = false;
+          gsap.set(panLayer, { willChange: 'auto' });
+        };
+
+        /*
+         * Wheel feeds a TARGET that quickTo chases — continuous pursuit, never raw
+         * deltas per event. Each axis syncs pan from its OWN onUpdate: a purely
+         * horizontal gesture never ticks the y tween, and if only one axis synced,
+         * the other axis's movement would go unrecorded.
+         */
+        const { durMicro, easeMicro } = motion();
+        const chase = reduced ? 0 : durMicro;
+        const panToX = gsap.quickTo(panLayer, 'x', {
+          duration: chase,
+          ease: easeMicro,
+          onUpdate: syncPan,
+          onComplete: demote,
+        });
+        const panToY = gsap.quickTo(panLayer, 'y', {
+          duration: chase,
+          ease: easeMicro,
+          onUpdate: syncPan,
+          onComplete: demote,
+        });
+
+        /*
          * Safety net: one Draggable per node, ever. A survivor here means a
          * cleanup was skipped — it must not accumulate. (GSAP itself kills the
          * previous Draggable on a target, but that is its policy, this is ours.)
@@ -557,29 +571,18 @@ export function Plane({
           // top of an object without activating it.
           minimumMovement: DRAG_THRESHOLD_PX,
           bounds,
+          // The stylesheet's `cursor: grab` on the viewport would otherwise be
+          // beaten by the inline `move` Draggable writes on its trigger.
+          cursor: 'grab',
+          activeCursor: 'grabbing',
+          onPress: promote,
           onDrag: syncPan,
+          onRelease: demote,
           onThrowUpdate: syncPan,
+          onThrowComplete: demote,
         });
         drag = instance ?? null;
         draggableRef.current = drag;
-
-        /*
-         * Wheel feeds a TARGET that quickTo chases — continuous pursuit, never raw
-         * deltas per event. Each axis syncs pan from its OWN onUpdate: a purely
-         * horizontal gesture never ticks the y tween, and if only one axis synced,
-         * the other axis's movement would go unrecorded.
-         */
-        const chase = reduced ? 0 : WHEEL_CHASE_SECONDS;
-        const panToX = gsap.quickTo(panLayer, 'x', {
-          duration: chase,
-          ease: WHEEL_CHASE_EASE,
-          onUpdate: syncPan,
-        });
-        const panToY = gsap.quickTo(panLayer, 'y', {
-          duration: chase,
-          ease: WHEEL_CHASE_EASE,
-          onUpdate: syncPan,
-        });
 
         wheel = Observer.create({
           target: viewport,
@@ -589,6 +592,7 @@ export function Plane({
           onChange(self) {
             const { pan } = session.read();
             if (!pan) return;
+            promote();
             // Deltas arrive in SCREEN px and pan lives in world units: divide by
             // the live zoom (at half scale, 100 px of wheel is 200 px of world).
             const z = zoomRef.current;
@@ -659,6 +663,7 @@ export function Plane({
       const view: Size = { w: geo.viewW, h: geo.viewH };
       const world: Size = { w: geo.worldW, h: geo.worldH };
       const bounds = panBounds(world, view, zoom);
+      const durUi = motion().durUi;
 
       // Zooming out NARROWS the pan range (a smaller scale shows more world), so
       // the current pan may fall outside it — bring it back on the same curve as
@@ -673,7 +678,7 @@ export function Plane({
             gsap.to(panLayer, {
               x: settled.x,
               y: settled.y,
-              duration: ZOOM_TWEEN_SECONDS,
+              duration: durUi,
               ease: ZOOM_TWEEN_EASE,
               onUpdate: syncPan,
             });
@@ -687,14 +692,19 @@ export function Plane({
         gsap.set(zoomLayer, { scale: zoom });
         passAfter = true;
       } else {
+        // Promoted for the tween only, demoted on landing — never permanent.
+        // The promotion is recorded by this context, so a mid-tween revert
+        // strips it along with the tween.
+        gsap.set(zoomLayer, { willChange: 'transform' });
         gsap.to(zoomLayer, {
           scale: zoom,
-          duration: ZOOM_TWEEN_SECONDS,
+          duration: durUi,
           ease: ZOOM_TWEEN_EASE,
           onUpdate: () => {
             zoomRef.current = gsap.getProperty(zoomLayer, 'scaleX') as number;
             runPass();
           },
+          onComplete: () => gsap.set(zoomLayer, { willChange: 'auto' }),
         });
       }
     }, viewport);
@@ -786,7 +796,7 @@ export function Plane({
         scale: true,
         prune: true,
         duration: VIEW_FLIP_SECONDS,
-        ease: VIEW_FLIP_EASE,
+        ease: motion().easeFlight,
       });
     },
     viewportRef,
@@ -808,21 +818,10 @@ export function Plane({
       data-lenis-prevent=""
       role="region"
       aria-label={labels.viewport}
-      style={VIEWPORT_STYLE}
     >
-      <div ref={zoomLayerRef} data-vitrina-zoom="" style={ZOOM_LAYER_STYLE}>
-        <div
-          ref={panLayerRef}
-          data-vitrina-pan=""
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            width: world.w,
-            height: world.h,
-            willChange: 'transform',
-          }}
-        >
+      <div ref={zoomLayerRef} data-vitrina-zoom="">
+        {/* World-sized: the one structural value only this render knows. */}
+        <div ref={panLayerRef} data-vitrina-pan="" style={{ width: world.w, height: world.h }}>
           {placed.map((inst) => {
             const entity = entityById.get(inst.entityId);
             if (!entity) return null;
@@ -843,13 +842,12 @@ export function Plane({
                 tabIndex={-1}
                 onClick={() => onOpen(inst.entityId, inst.id)}
                 style={{
-                  ...OBJECT_STYLE,
                   left: inst.x,
                   top: inst.y,
                   width: inst.size,
                   height: inst.size,
                   // React owns `visibility`; GSAP owns opacity/scale/pointer-events.
-                  // Neither ever writes the other's.
+                  // Neither ever writes the other's. Everything else is base.css's.
                   visibility: hiddenIds.has(inst.id) ? 'hidden' : undefined,
                 }}
               >

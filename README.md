@@ -11,6 +11,64 @@ independent implementation; no code, assets, or copy of theirs were used.
 public types exist; the plane itself does not yet. The full README (install, examples,
 prop table, theming) lands with the first publishable build.
 
+## Styles and themes
+
+Two imports: the structural stylesheet (required) and exactly one theme.
+
+```ts
+import 'vitrina/styles.css'; // REQUIRED: layers, stacking, overflow, focus geometry
+import 'vitrina/themes/paper.css'; // the factory default — or vitrina/themes/void.css
+```
+
+`styles.css` (base) owns the mechanic's structure and carries **no color**; without it
+the plane does not clip, stack, or scroll correctly. A theme is custom properties on
+`[data-vitrina-root]` plus the paint that consumes them — `paper` is a light plane with
+a dark diffuse shadow under each object, `void` is near-black with a halo of light
+instead. Both define the same token set, so swapping themes is a one-line change; your
+own theme is the same file shape with your values.
+
+**Motion tokens** live on `[data-vitrina-root]` and are read **once at mount** with one
+`getComputedStyle` call — never per frame. Retuning one applies on the next mount.
+
+| Token | Drives | Default |
+| --- | --- | --- |
+| `--vitrina-dur-micro` | the wheel chase | `0.16s` |
+| `--vitrina-dur-ui` | one zoom step (and its pan re-clamp) | `0.32s` |
+| `--vitrina-dur-flight` | the detail flight | `0.6s` |
+| `--vitrina-dur-panel` | the panel wipe, each content line, the height tween | `0.45s` |
+| `--vitrina-ease-micro` | the wheel chase (a GSAP ease string) | `power3.out` |
+| `--vitrina-ease-flight` | the flights and the view Flip (a GSAP ease string) | `power3.inOut` |
+| `--vitrina-stagger-line` | gap between content-line entrances | `0.07s` |
+| `--vitrina-stagger-line-exit` | the tighter exit gap | `0.04s` |
+
+The ease tokens hold **GSAP ease strings**, not CSS timing functions — they drive
+tweens. The panel wipe's own curves stay CSS (`--vitrina-panel-ease-in`/`-out`). Layout
+knobs (`--vitrina-grid-cell`, `--vitrina-grid-gap`, `--vitrina-detail-object`,
+`--vitrina-panel-width`) are ordinary custom properties a theme may retune under media
+queries.
+
+## Controls
+
+The library renders no chrome on its own. `useVitrina()` exposes the state and
+transitions to build yours; `<VitrinaControls>` is the unstyled convenience on top —
+three buttons (zoom out, zoom in, view toggle) whose text comes from your `labels`,
+each carrying a `data-vitrina-*` attribute to style and position. It renders nothing
+when the view is locked (see below). Mount it as a child of `<Vitrina>`.
+
+## Reduced motion
+
+The `reducedMotion` prop arbitrates what the OS preference means:
+
+- `'respect'` (default): no intro, no pops, no inertia, no staggers — objects simply
+  appear; drag, wheel, zoom and the panel keep working.
+- `'grid'`: additionally lock the view to the grid — no toggle, no zoom.
+  `api.viewLocked` tells chrome to hide both (`<VitrinaControls>` already does).
+- `'ignore'`: animate regardless; that accessibility decision is yours.
+
+Tab order is identical in all three modes — focus is not decoration. The stylesheet
+follows the same arbitration: base.css keys its reduced rules on the
+`data-vitrina-reduced` attribute the root stamps, never on the media query.
+
 ## Detail content entrance (`data-vitrina-line`)
 
 The detail panel's content is yours (`renderDetail`), so the library cannot animate

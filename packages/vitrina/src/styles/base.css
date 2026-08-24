@@ -1,13 +1,23 @@
 /*
- * vitrina — base stylesheet. Step 6 ships the focus rules and the panel's own
- * entrance; the rest (cursor states, theme colours) lands in step 7.
+ * vitrina — base stylesheet. STRUCTURAL and MANDATORY: from step 7 the layer
+ * positioning, the stacking scale, overflow, transform origins, touch behaviour
+ * and the focus-ring geometry live here, keyed on the data-vitrina-* attributes
+ * — components carry inline styles only for values computed at runtime (world
+ * size, instance positions, GSAP-owned transforms, visibility). Import it before
+ * mounting (`vitrina/styles.css`): the motion tokens below are read ONCE at
+ * mount with getComputedStyle, never per frame — retuning one applies on the
+ * next mount.
  *
- * Motion custom properties, the single source of truth for the choreography —
- * the panel wipe (below) and the object flights (GSAP, which reads these at
- * runtime) share the same numbers, so no duration is hard-coded in a component.
- * A theme, or devtools, may retune them: `--vitrina-dur-flight` at 2s plays the
- * whole sequence in deliberate slow motion.
+ * NO COLOR HERE, and no theme assumption. The look ships separately —
+ * `vitrina/themes/paper.css` (the factory default) or `vitrina/themes/void.css`
+ * — as --vitrina-* custom properties on [data-vitrina-root] plus the paint that
+ * consumes them. Import exactly one theme.
+ *
+ * NO will-change here either, ever: a permanently promoted layer sits on GPU
+ * memory for the lifetime of the page. The interaction code promotes a layer
+ * when a gesture or tween starts and demotes it when it settles.
  */
+
 [data-vitrina-root] {
   /*
    * Stacking scale. Every layer the library paints places itself here — no bare
@@ -18,20 +28,45 @@
    *   panel  — the detail panel container.
    *   flight — the flying object(s): the active clone, and the relay flying home.
    *            ABOVE the panel in every state, so the object never ducks behind
-   *            the panel mid-flight. A stable rung — never Flip's momentary
-   *            during-flip z boost, which is why the flying object lives on its
-   *            own sibling layer rather than borrowing the panel's or an object's.
-   * Consumer chrome that must sit over the panel takes a value above --vitrina-z-flight.
+   *            the panel mid-flight. Carried by the PORTAL WRAPPER on body — the
+   *            node that competes against the panel in the document's root
+   *            stacking context.
+   * Consumer chrome that must sit over the panel takes a value above
+   * --vitrina-z-flight.
    */
   --vitrina-z-plane: 10;
   --vitrina-z-panel: 40;
   --vitrina-z-flight: 50;
 
+  /*
+   * Motion tokens — the single source of truth for the choreography. The CSS
+   * animations below use them directly; the GSAP side reads them once at mount
+   * (`readMotionTokens`, one getComputedStyle call). Who uses which:
+   *   dur-micro  — the wheel chase (the quickTo pursuing the wheel target).
+   *   dur-ui     — one discrete zoom step, and the pan re-clamp riding with it.
+   *   dur-flight — the detail flight (object plane ↔ panel, and the relay home).
+   *   dur-panel  — the panel wipe, each content line, the between-objects height
+   *                tween.
+   */
+  --vitrina-dur-micro: 0.16s;
+  --vitrina-dur-ui: 0.32s;
   --vitrina-dur-flight: 0.6s;
   --vitrina-dur-panel: 0.45s;
+
+  /*
+   * The ease tokens hold GSAP ease strings, NOT CSS timing functions — they are
+   * consumed by tweens, and GSAP core does not parse cubic-bezier(). The two
+   * CSS-side eases (the panel wipe keyframes) are real timing functions below.
+   *   ease-micro  — the wheel chase.
+   *   ease-flight — the detail flight and the plane↔grid Flip.
+   */
+  --vitrina-ease-micro: power3.out;
+  --vitrina-ease-flight: power3.inOut;
+
   /* Entrance and its mirror: the close reads as a rewind, not a hurried exit. */
   --vitrina-panel-ease-in: cubic-bezier(0.22, 1, 0.36, 1);
   --vitrina-panel-ease-out: cubic-bezier(0.64, 0, 0.78, 0);
+
   /*
    * Content lines (`data-vitrina-line` in the panel): the gap between
    * consecutive starts. On the way in the stagger paces the reading in order; on
@@ -41,51 +76,246 @@
    */
   --vitrina-stagger-line: 0.07s;
   --vitrina-stagger-line-exit: 0.04s;
+
+  /*
+   * Layout knobs a theme may retune — under media queries too, which inline
+   * styles cannot express. Cell/step measured on the interaction reference.
+   */
+  --vitrina-grid-cell: 240px;
+  --vitrina-grid-gap: 80px;
+  --vitrina-detail-object: 240px;
+  --vitrina-panel-width: 50%;
 }
 
 /*
- * Focus rings. Closing the detail returns focus to the object it opened from
- * with a programmatic `.focus()`, and in Chrome a programmatic focus matches
- * `:focus-visible` even after a mouse click — so the native ring would appear on
- * the object under the pointer every time a panel closes. The ring is therefore
- * suppressed on the button and drawn back deliberately on `:focus-visible`.
- *
- * `outline: 2px solid transparent` rather than `outline: none`: a transparent
- * outline still renders under forced colours (Windows high contrast), where
- * `none` would leave keyboard users with nothing.
+ * The root: the containing block for the plane/grid and the panel layer, and the
+ * fallback focus target (tabIndex -1) when a detail closes with no origin — a
+ * container, no ring. It must NOT create a stacking context (no transform, no
+ * filter, no z-index): the panel layer inside has to emerge into the document's
+ * root context to compete with the flight portal on body. The portal wrapper is
+ * stamped data-vitrina-root too (so the tokens resolve on body); its own rule
+ * further down re-declares position and must stay after this one.
  */
-[data-vitrina-object] {
+[data-vitrina-root] {
+  position: relative;
+  outline: none;
+}
+
+/* --- The plane: viewport › zoom layer › pan layer › objects ---------------- */
+
+[data-vitrina-viewport] {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  /* Both axes, always explicitly: leaving one unset couples it to the other,
+     and any native scroll-into-view could then hand this box a real scroll
+     offset outside GSAP's transforms. */
+  overflow-x: hidden;
+  overflow-y: hidden;
+  /* The library owns the gesture: no native panning/zooming underneath it. */
+  touch-action: none;
+  cursor: grab;
+  /* The whole plane sits on ONE stacking rung, below the panel and the flight.
+     The z-index makes the viewport a stacking context that confines every
+     object — the active one included — beneath the panel: a dragged object
+     passing under the panel ducks behind it. No object ever carries its own
+     z-index. */
+  z-index: var(--vitrina-z-plane);
+}
+
+/* Zoom layer: viewport-sized, scale only. The origin at the viewport centre is
+   what makes zoom need NO pan compensation (§6.1). */
+[data-vitrina-zoom] {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+}
+
+/* Pan layer: world-sized (inline, computed), translate only. */
+[data-vitrina-pan] {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+/*
+ * Object buttons — plane instances and grid cards. Reset to a bare box; the
+ * content is renderObject's.
+ *
+ * Focus-ring geometry (color is the theme's): closing the detail returns focus
+ * with a programmatic .focus(), and in Chrome a programmatic focus matches
+ * :focus-visible even after a mouse click — so the native ring would appear on
+ * the object under the pointer every time a panel closes. The ring is therefore
+ * suppressed and drawn back deliberately on :focus-visible. `2px solid
+ * transparent` rather than `none`: a transparent outline still renders under
+ * forced colours (Windows high contrast), where `none` would leave keyboard
+ * users with nothing. Both rules live HERE, in the stylesheet — an inline
+ * `outline: none` would beat the :focus-visible ring.
+ */
+[data-vitrina-object],
+[data-vitrina-controls] button {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
   outline: 2px solid transparent;
   outline-offset: 2px;
 }
 
-[data-vitrina-object]:focus-visible {
+[data-vitrina-object]:focus-visible,
+[data-vitrina-controls] button:focus-visible {
   outline-color: var(--vitrina-focus, currentColor);
 }
 
+/* Plane instances position absolutely in the world; left/top/size are inline
+   (computed per instance). Grid cards stay in grid flow. */
+[data-vitrina-pan] > [data-vitrina-object] {
+  position: absolute;
+}
+
+/* --- The grid view --------------------------------------------------------- */
+
+[data-vitrina-grid] {
+  position: absolute;
+  inset: 0;
+  /* Both axes declared, deliberately: `overflow-x` left unset would couple to
+     `overflow-y: auto` and make this a valid horizontal scroller that any
+     scroll-into-view can hand a real scrollLeft. scrollbar-gutter keeps the
+     content width constant whether or not a classic scrollbar shows. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  padding: var(--vitrina-grid-gap);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, var(--vitrina-grid-cell));
+  gap: var(--vitrina-grid-gap);
+  justify-content: center;
+  align-content: start;
+  /* Same floor as the plane: one rung for the whole object layer. */
+  z-index: var(--vitrina-z-plane);
+}
+
+[data-vitrina-card] {
+  width: var(--vitrina-grid-cell);
+  height: var(--vitrina-grid-cell);
+}
+
+/* --- The detail panel ------------------------------------------------------ */
+
+/* The panel layer: inside the root, above the plane, below the flight. Only the
+   panel inside takes the hit-test — a `pointer-events: none` layer keeps the
+   plane alive beside the panel (no overlay: darkening the other half eats the
+   pointerdown that starts a drag). */
+[data-vitrina-detail] {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: var(--vitrina-z-panel);
+}
+
+/* The panel wrapper: stable across the wipe, holds any consumer chrome that
+   sticks out past the seam (a sibling of the card, never its child). Focused
+   programmatically on open (tabIndex -1): a container, no ring. */
+[data-vitrina-panel] {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--vitrina-panel-width);
+  max-width: 100%;
+  box-sizing: border-box;
+  pointer-events: auto;
+  outline: none;
+}
+
 /*
- * The panel container: uncovered ONCE, covered ONCE, still in between. The card
- * is not slid in, it is uncovered — a clip-path wipe from the seam outward. The
- * mask lives on the CARD, never the wrapper: the wrapper holds any chrome that
- * sticks out past the panel edge, and a clip-path there would cut it into a
- * crescent.
- *
- * `data-vitrina-panel-anim`, set by the orchestrator from the PANEL phase (not
- * the object's), plays the wipe: `none` on every relay, so switching the active
- * object never re-wipes. Keyframes (not a transition) so the entrance runs on the
- * very commit the card mounts, with nothing to transition from.
- *
- * The object choreography is sequenced by the machine, not by CSS delays: on a
- * first open the object WAITS on the plane until the reveal wipe's own duration
- * elapses (the orchestrator's `revealed` signal), then flies into a card that has
- * stopped growing; on close the object flies home first and only then does the
- * panel cover. The exit is the exact inverse of the entrance: same duration,
- * mirrored curve.
+ * The card: the surface. The mask AND the scroll both live here, never on the
+ * wrapper — a clip-path on the wrapper would cut sticking-out chrome into a
+ * crescent, and declaring overflow there would clip it. Both overflow axes
+ * explicit (an unset X becomes a valid horizontal scroller), and
+ * scrollbar-gutter reserved up front: with a classic scrollbar the width is
+ * otherwise reserved only once content needs it, and crossing that threshold
+ * MID-ANIMATION shoves the content sideways with no tween on it.
  */
 [data-vitrina-panel-card] {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
   clip-path: inset(0);
 }
 
+/* The slot the object lands in. Always in the DOM (a display:none box has no
+   rect to fly to); visibility is the orchestrator's, inline. */
+[data-vitrina-slot] {
+  position: relative;
+  width: var(--vitrina-detail-object);
+  height: var(--vitrina-detail-object);
+}
+
+/* --- The flight (portalled to document.body) ------------------------------- */
+
+/*
+ * The portal wrapper — the ONE element that carries --vitrina-z-flight. This is
+ * the node that competes against the panel in the document's ROOT stacking
+ * context, so the token has to live here, not on the inner layers (a child can
+ * never escape its parent's level). `position: fixed` resolves against the
+ * viewport — the whole reason the flight is portalled OUT of the root's
+ * transformed plane layers — and overrides the root rule's `position: relative`
+ * (this wrapper is stamped data-vitrina-root so the tokens resolve on body):
+ * keep this rule after that one.
+ */
+[data-vitrina-flight-portal] {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: var(--vitrina-z-flight);
+}
+
+/* The two inner layers need NO z-index: the wrapper already outranks the panel,
+   and between themselves document order decides (cosmetic — different entities
+   flying opposite ways). Two layers only so they can move independently. */
+[data-vitrina-flight-layer],
+[data-vitrina-relay-layer] {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* A flying visual: the box (left/top/width/height) is set ONCE by the
+   orchestrator to the destination's; only x/y/scaleX/scaleY animate — no layout
+   per frame. Origin at the top-left, so scale is the plain ratio of sizes.
+   No z-index: the ranking never rides on Flip's transient during-flip boost. */
+[data-vitrina-flight],
+[data-vitrina-relay] {
+  position: fixed;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+
+/* --- The panel wipe -------------------------------------------------------- */
+
+/*
+ * The panel container is uncovered ONCE, covered ONCE, still in between. The
+ * card is not slid in, it is uncovered — a clip-path wipe from the seam outward.
+ *
+ * `data-vitrina-panel-anim`, set by the orchestrator from the PANEL phase (not
+ * the object's), plays the wipe: `none` on every relay, so switching the active
+ * object never re-wipes. Keyframes (not a transition) so the entrance runs on
+ * the very commit the card mounts, with nothing to transition from. The object
+ * choreography is sequenced by the machine off these same durations, never by a
+ * CSS delay.
+ */
 [data-vitrina-panel][data-vitrina-panel-anim='reveal'] [data-vitrina-panel-card] {
   animation: vitrina-panel-reveal var(--vitrina-dur-panel) var(--vitrina-panel-ease-in) both;
 }
@@ -112,9 +342,14 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  [data-vitrina-panel][data-vitrina-panel-anim] [data-vitrina-panel-card] {
-    animation: none;
-    clip-path: inset(0);
-  }
+/*
+ * Reduced motion is the ROOT ATTRIBUTE, never a media query: the `reducedMotion`
+ * prop arbitrates ('ignore' animates even with the preference on, an
+ * accessibility decision the consumer takes on themselves), and only the
+ * orchestrator knows the outcome. It stamps data-vitrina-reduced when reduction
+ * is EFFECTIVE; a media query here would overrule 'ignore' silently.
+ */
+[data-vitrina-root][data-vitrina-reduced] [data-vitrina-panel-card] {
+  animation: none;
+  clip-path: inset(0);
 }

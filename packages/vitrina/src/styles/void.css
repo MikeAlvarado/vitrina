@@ -1,0 +1,47 @@
+/*
+ * vitrina — void theme. The dark counterpart to paper: near-black ground, light
+ * objects, and NO shadow — in the void an object casts nothing; it carries a
+ * halo of light instead (zero-offset drop-shadows, one tight and one wide).
+ *
+ * Import exactly ONE theme. Same token set as paper.css on [data-vitrina-root]
+ * — swapping themes is a one-line change. Structure lives in base.css.
+ */
+
+[data-vitrina-root] {
+  /* Ink on the root, not only on the views: consumer chrome inside the root
+     (controls included) inherits a legible color instead of the page's. */
+  color: var(--vitrina-ink);
+
+  /* Not pure black: #000 bands visibly on cheap panels once large soft
+     gradients (the halos) sit on it. */
+  --vitrina-page: #08080a;
+  --vitrina-ink: #eef0f2;
+  --vitrina-muted: #6b6f76;
+  --vitrina-focus: #eef0f2;
+  --vitrina-panel-surface: #101014;
+  --vitrina-seam: rgba(238, 240, 242, 0.14);
+  /* The COMPLETE filter value in ONE token (see paper.css for why). */
+  --vitrina-object-shadow: drop-shadow(0 0 16px rgba(238, 240, 242, 0.22))
+    drop-shadow(0 0 56px rgba(238, 240, 242, 0.1));
+}
+
+[data-vitrina-viewport],
+[data-vitrina-grid] {
+  background: var(--vitrina-page);
+  color: var(--vitrina-ink);
+}
+
+/* Every copy of an object carries the same halo: plane instance, grid card,
+   panel slot copy, and both flying visuals. */
+[data-vitrina-object],
+[data-vitrina-slot],
+[data-vitrina-flight],
+[data-vitrina-relay] {
+  filter: var(--vitrina-object-shadow);
+}
+
+[data-vitrina-panel-card] {
+  background: var(--vitrina-panel-surface);
+  color: var(--vitrina-ink);
+  border-left: 1px solid var(--vitrina-seam);
+}

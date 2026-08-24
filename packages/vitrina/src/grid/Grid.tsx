@@ -13,7 +13,6 @@
  */
 
 import { useMemo, useRef } from 'react';
-import type { CSSProperties } from 'react';
 import { gsap } from 'gsap';
 
 import type {
@@ -23,9 +22,10 @@ import type {
   VitrinaLayout,
   VitrinaProps,
 } from '../types';
-import { VIEW_FLIP_EASE, VIEW_FLIP_SECONDS } from '../defaults';
+import { VIEW_FLIP_SECONDS } from '../defaults';
 import { generateInstances } from '../layout/generate';
 import { getInteractionPlugins, useIsomorphicLayoutEffect } from '../gsap';
+import type { GetMotion } from '../motion';
 import type { Session, ViewFlipRecord } from '../session';
 
 export interface GridProps {
@@ -43,49 +43,18 @@ export interface GridProps {
   onOpen: (entityId: string, instanceId: string) => void;
   /** Registers each card with the root, under the instance it stands for. */
   onNode: (instanceId: string, el: HTMLElement | null) => void;
+  /** The motion tokens, read once at the root's mount. */
+  motion: GetMotion;
 }
 
 /*
- * Structural, inline, like the plane's. Cell and gap are custom properties so a
- * theme can retune them — under a media query too, which inline styles cannot.
- *
- * Both overflow axes are declared. Leaving `overflow-x` unset couples it to
- * `overflow-y: auto` (if one axis stops being `visible`, so does the other),
- * which makes the container a valid HORIZONTAL scroller as well: any native
- * scroll-into-view — a programmatic `.focus()`, a tab to a card — could then
- * hand it a real `scrollLeft` and shove every card sideways. Hidden on purpose.
- * `scrollbar-gutter: stable` keeps the content width constant whether or not a
- * classic scrollbar is showing, so nothing shifts when the card count crosses
- * the fold.
+ * All structure — the container's grid layout, BOTH overflow axes (leaving X
+ * unset would couple it to Y and make this a valid horizontal scroller that a
+ * native scroll-into-view can hand a real scrollLeft), the scrollbar gutter,
+ * the stacking rung, the card's cell box — lives in base.css, keyed on the data
+ * attributes; cell and gap are custom properties a theme can retune, under
+ * media queries too. Inline here is only the per-commit visibility.
  */
-const GRID_STYLE: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  overflowY: 'auto',
-  overflowX: 'hidden',
-  scrollbarGutter: 'stable',
-  overscrollBehavior: 'contain',
-  boxSizing: 'border-box',
-  padding: 'var(--vitrina-grid-gap, 80px)',
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fill, var(--vitrina-grid-cell, 240px))',
-  gap: 'var(--vitrina-grid-gap, 80px)',
-  justifyContent: 'center',
-  alignContent: 'start',
-  // Same floor as the plane: the whole card layer sits below the panel and the
-  // flight, on one rung, the active card hidden (visibility) while its clone flies.
-  zIndex: 'var(--vitrina-z-plane, 10)',
-};
-
-const CARD_STYLE: CSSProperties = {
-  display: 'block',
-  width: 'var(--vitrina-grid-cell, 240px)',
-  height: 'var(--vitrina-grid-cell, 240px)',
-  padding: 0,
-  border: 0,
-  background: 'transparent',
-  cursor: 'pointer',
-};
 
 export function Grid({
   entities,
@@ -99,6 +68,7 @@ export function Grid({
   activeEntityId,
   onOpen,
   onNode,
+  motion,
 }: GridProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   /** Entity id → its card. Filled by stable callback refs. */
@@ -197,7 +167,7 @@ export function Grid({
         scale: true,
         prune: true,
         duration: VIEW_FLIP_SECONDS,
-        ease: VIEW_FLIP_EASE,
+        ease: motion().easeFlight,
         // Cards with no shown object to come from.
         onEnter: (elements) =>
           gsap.fromTo(
@@ -220,7 +190,6 @@ export function Grid({
       data-lenis-prevent=""
       role="region"
       aria-label={labels.grid ?? labels.viewport}
-      style={GRID_STYLE}
     >
       {entities.map((entity) => (
         <button
@@ -234,10 +203,8 @@ export function Grid({
           data-flip-id={representative(entity.id)}
           aria-label={labels.objectLabel(entity)}
           onClick={() => onOpen(entity.id, representative(entity.id))}
-          style={{
-            ...CARD_STYLE,
-            visibility: hiddenIds.has(representative(entity.id)) ? 'hidden' : undefined,
-          }}
+          // React owns `visibility`; GSAP owns opacity/scale. Structure is base.css's.
+          style={{ visibility: hiddenIds.has(representative(entity.id)) ? 'hidden' : undefined }}
         >
           {renderObject(entity, {
             instanceId: representative(entity.id),

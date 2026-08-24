@@ -33,23 +33,16 @@ import type {
 import {
   DEFAULT_ZOOM_INDEX,
   DEFAULT_ZOOM_STEPS,
-  DETAIL_FLIGHT_DURATION_VAR,
-  DETAIL_FLIGHT_EASE,
-  DETAIL_FLIGHT_SECONDS,
   DETAIL_LINE_EASE,
   DETAIL_LINE_EXIT_EASE,
   DETAIL_LINE_SHIFT,
-  DETAIL_LINE_STAGGER_EXIT_SECONDS,
-  DETAIL_LINE_STAGGER_EXIT_VAR,
-  DETAIL_LINE_STAGGER_SECONDS,
-  DETAIL_LINE_STAGGER_VAR,
-  DETAIL_PANEL_DURATION_VAR,
   DETAIL_PANEL_EASE,
-  DETAIL_PANEL_SECONDS,
   resolveLayout,
 } from './defaults';
 import { VitrinaContext } from './context';
 import { useIsomorphicLayoutEffect } from './gsap';
+import { FALLBACK_MOTION, readMotionTokens } from './motion';
+import type { MotionTokens } from './motion';
 import { usePrefersReducedMotion } from './reducedMotion';
 import { createSession } from './session';
 import { Plane } from './plane/Plane';
@@ -67,20 +60,6 @@ interface PendingOrigin {
   entityId: string;
   instanceId: string | null;
   animate: boolean;
-}
-
-/**
- * A duration custom property in seconds, read live so the CSS variables stay the
- * single source of truth for the choreography. `fallback` covers SSR/jsdom, where
- * the stylesheet is absent and `getComputedStyle` returns nothing.
- */
-function readSeconds(root: Element | null, name: string, fallback: number): number {
-  if (!root || typeof getComputedStyle !== 'function') return fallback;
-  const raw = getComputedStyle(root).getPropertyValue(name).trim();
-  if (!raw) return fallback;
-  const value = parseFloat(raw);
-  if (Number.isNaN(value)) return fallback;
-  return raw.endsWith('ms') ? value / 1000 : value;
 }
 
 export function Vitrina({
@@ -171,6 +150,20 @@ export function Vitrina({
   useIsomorphicLayoutEffect(() => {
     setPortalReady(true);
   }, []);
+
+  /*
+   * The motion tokens, read ONCE at mount — one getComputedStyle on the root,
+   * never a read per interaction and never per frame (§7). Everything animated
+   * from JS goes through `motion()`; the fallback answers on the server, under
+   * jsdom, and in the sliver before the mount effect (nothing animates there —
+   * every consumer runs on a user action or a later commit). Retuning a token
+   * therefore applies on the next MOUNT, not live.
+   */
+  const motionRef = useRef<MotionTokens | null>(null);
+  useIsomorphicLayoutEffect(() => {
+    motionRef.current = readMotionTokens(rootRef.current);
+  }, []);
+  const motion = useCallback((): MotionTokens => motionRef.current ?? FALLBACK_MOTION, []);
   /**
    * Instance id → its button, in whichever view is mounted (grid cards register
    * under the instance they stand for). The flight measures its origin here and
@@ -361,6 +354,9 @@ export function Vitrina({
       y: from.top - to.top,
       scaleX: to.width === 0 ? 1 : from.width / to.width,
       scaleY: to.height === 0 ? 1 : from.height / to.height,
+      // Promoted for the flight only; the context revert in the landing commit
+      // strips it — never permanent (§7).
+      willChange: 'transform',
     });
     gsap.to(visual, {
       x: 0,
@@ -368,7 +364,7 @@ export function Vitrina({
       scaleX: 1,
       scaleY: 1,
       duration: seconds,
-      ease: DETAIL_FLIGHT_EASE,
+      ease: motion().easeFlight,
       onComplete,
     });
   };
@@ -436,9 +432,8 @@ export function Vitrina({
       settle();
       return;
     }
-    const seconds = readSeconds(root, DETAIL_FLIGHT_DURATION_VAR, DETAIL_FLIGHT_SECONDS);
     const ctx = gsap.context(() => {
-      flyVisual(visual, from, to, seconds, settle);
+      flyVisual(visual, from, to, motion().durFlight, settle);
     }, root);
     return () => ctx.revert();
   }, [activeFlightKey]);
@@ -467,9 +462,8 @@ export function Vitrina({
       done();
       return;
     }
-    const seconds = readSeconds(root, DETAIL_FLIGHT_DURATION_VAR, DETAIL_FLIGHT_SECONDS);
     const ctx = gsap.context(() => {
-      flyVisual(visual, from, to, seconds, done);
+      flyVisual(visual, from, to, motion().durFlight, done);
     }, root);
     return () => ctx.revert();
   }, [relayInstanceId]);
@@ -516,7 +510,7 @@ export function Vitrina({
     prevPanelRef.current = panelPhase;
     const root = rootRef.current;
     const reduced = reducedRef.current;
-    const seconds = reduced ? 0 : readSeconds(root, DETAIL_PANEL_DURATION_VAR, DETAIL_PANEL_SECONDS);
+    const seconds = reduced ? 0 : motion().durPanel;
     const lines = reduced ? [] : Array.from(panelRef.current?.querySelectorAll('[data-vitrina-line]') ?? []);
 
     if (panelPhase === 'open' && prev !== 'open') {
@@ -524,7 +518,7 @@ export function Vitrina({
       const release = () => dispatch({ type: 'revealed' });
       let ctx: gsap.Context | undefined;
       if (lines.length > 0) {
-        const step = readSeconds(root, DETAIL_LINE_STAGGER_VAR, DETAIL_LINE_STAGGER_SECONDS);
+        const step = motion().staggerLine;
         // Starts at multiples of the step, all behind the wipe (an open without
         // one — no origin to fly from — has nothing to wait for).
         const delay = panelAnimRef.current === 'reveal' ? seconds : 0;
@@ -559,7 +553,7 @@ export function Vitrina({
       let ctx: gsap.Context | undefined;
       let total = seconds;
       if (lines.length > 0) {
-        const step = readSeconds(root, DETAIL_LINE_STAGGER_EXIT_VAR, DETAIL_LINE_STAGGER_EXIT_SECONDS);
+        const step = motion().staggerLineExit;
         total = Math.max(total, (lines.length - 1) * step + seconds);
         ctx = gsap.context(() => {
           gsap.fromTo(
@@ -623,8 +617,8 @@ export function Vitrina({
     const content = panelRef.current?.querySelector('[data-vitrina-detail-content]');
     const lines = content ? Array.from(content.querySelectorAll('[data-vitrina-line]')) : [];
     if (lines.length === 0) return;
-    const step = readSeconds(root, DETAIL_LINE_STAGGER_VAR, DETAIL_LINE_STAGGER_SECONDS);
-    const seconds = readSeconds(root, DETAIL_PANEL_DURATION_VAR, DETAIL_PANEL_SECONDS);
+    const step = motion().staggerLine;
+    const seconds = motion().durPanel;
     const ctx = gsap.context(() => {
       gsap.fromTo(
         lines,
@@ -662,7 +656,7 @@ export function Vitrina({
     const prev = cardHeightRef.current;
     cardHeightRef.current = next;
     if (prev === null || prev === next || reducedRef.current) return;
-    const seconds = readSeconds(root, DETAIL_PANEL_DURATION_VAR, DETAIL_PANEL_SECONDS);
+    const seconds = motion().durPanel;
     const ctx = gsap.context(() => {
       gsap.fromTo(
         card,
@@ -763,8 +757,9 @@ export function Vitrina({
       detailPhase: detail.panel === 'open' ? 'open' : detail.panel === 'covering' ? 'closing' : 'idle',
       openDetail,
       closeDetail,
+      labels,
     }),
-    [zoomSteps, index, zoom, stepCount, view, setView, viewLocked, activeId, detail.panel, openDetail, closeDetail],
+    [zoomSteps, index, zoom, stepCount, view, setView, viewLocked, activeId, detail.panel, openDetail, closeDetail, labels],
   );
 
   const copy = activeCopy(detail);
@@ -804,11 +799,17 @@ export function Vitrina({
       data-vitrina-root=""
       data-vitrina-view={view}
       data-vitrina-panel-phase={detail.panel}
+      // EFFECTIVE reduced motion, for the stylesheet: base.css keys its
+      // reduced-motion rules on this attribute, never on the media query — the
+      // prop arbitrates ('ignore' animates with the preference on), and only
+      // this component knows the outcome.
+      data-vitrina-reduced={reduced ? '' : undefined}
       className={className}
       // Focusable (programmatically only) as the fallback focus target when a
-      // detail closes with no origin to return to. A container: no ring.
+      // detail closes with no origin to return to. A container: no ring
+      // (base.css); its position and everything structural are base.css's too.
       tabIndex={-1}
-      style={{ position: 'relative', outline: 'none', ...style }}
+      style={style}
     >
       <VitrinaContext.Provider value={api}>
         {view === 'plane' ? (
@@ -825,6 +826,7 @@ export function Vitrina({
             activeEntityId={activeCtxEntityId}
             onOpen={openDetail}
             onNode={registerNode}
+            motion={motion}
           />
         ) : (
           <Grid
@@ -839,6 +841,7 @@ export function Vitrina({
             activeEntityId={activeCtxEntityId}
             onOpen={openDetail}
             onNode={registerNode}
+            motion={motion}
           />
         )}
         {activeEntity && (

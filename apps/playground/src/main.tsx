@@ -1,15 +1,23 @@
 import { StrictMode, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Vitrina } from 'vitrina';
+import { Vitrina, VitrinaControls } from 'vitrina';
 import type { VitrinaEntity, VitrinaLabels } from 'vitrina';
 
-// base.css exists since step 6 (focus rules, the panel wipe, and the stacking +
-// motion tokens); void.css is step 7 and does not exist yet. Globbed instead of
-// imported so this file runs whether or not each is present, and picks up void.css
-// — with HMR — the moment it lands in packages/vitrina/src/styles; an empty match
-// is not an error. The page still supplies the black (index.html); the library's
-// structural inline styles carry the mechanic either way.
-import.meta.glob('../../../packages/vitrina/src/styles/{base,void}.css', { eager: true });
+// base.css is mandatory since step 7: it owns the structure (layers, stacking,
+// overflow, focus geometry) — always loaded. The THEMES are imported as raw
+// text instead: both target [data-vitrina-root], so loading the two at once
+// would just cascade by file order; the theme switch injects exactly one into a
+// <style> tag.
+import.meta.glob('../../../packages/vitrina/src/styles/base.css', { eager: true });
+const THEME_SOURCES = import.meta.glob('../../../packages/vitrina/src/styles/{paper,void}.css', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+type Theme = 'paper' | 'void';
+const themeCss = (theme: Theme): string =>
+  Object.entries(THEME_SOURCES).find(([path]) => path.endsWith(`/${theme}.css`))?.[1] ?? '';
 
 // Fifteen glyphs, zero image assets. If the plane feels right with these, the
 // problem is never the images.
@@ -47,11 +55,26 @@ const labels: VitrinaLabels = {
 };
 
 function App() {
-  // The two collision modes are only tellable apart in a real browser (the gate
-  // proves the state machine, never the feel): a toggle to flip between them.
+  // The two collision modes, the two themes and slow motion are only tellable
+  // apart in a real browser (the gate proves the machine, never the feel):
+  // toggles for all three. Slow motion remounts (key): the motion tokens are
+  // read once at mount, so retuning --vitrina-dur-flight needs a fresh mount.
   const [collision, setCollision] = useState<'serialize' | 'crossfade'>('serialize');
+  const [theme, setTheme] = useState<Theme>('paper');
+  const [slow, setSlow] = useState(false);
+  const ink = theme === 'paper' ? '#222' : '#fff';
+  const surface = theme === 'paper' ? '#f5f6ee' : '#000';
+  const pill = (selected: boolean) => ({
+    padding: '6px 12px',
+    borderRadius: 999,
+    border: '1px solid currentColor',
+    background: selected ? ink : 'transparent',
+    color: selected ? surface : ink,
+    cursor: 'pointer',
+  });
   return (
     <>
+      <style>{themeCss(theme)}</style>
       <div
         style={{
           position: 'fixed',
@@ -62,31 +85,38 @@ function App() {
           gap: 8,
           fontFamily: 'system-ui, sans-serif',
           fontSize: 13,
+          color: ink,
         }}
       >
         {(['serialize', 'crossfade'] as const).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => setCollision(mode)}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 999,
-              border: '1px solid #333',
-              background: collision === mode ? '#fff' : 'transparent',
-              color: collision === mode ? '#000' : '#fff',
-              cursor: 'pointer',
-            }}
-          >
+          <button key={mode} type="button" onClick={() => setCollision(mode)} style={pill(collision === mode)}>
             {mode}
           </button>
         ))}
+        {(['paper', 'void'] as const).map((name) => (
+          <button key={name} type="button" onClick={() => setTheme(name)} style={pill(theme === name)}>
+            {name}
+          </button>
+        ))}
+        <button type="button" onClick={() => setSlow((s) => !s)} style={pill(slow)}>
+          2s flight
+        </button>
       </div>
       <Vitrina
+        key={slow ? 'slow' : 'normal'}
         entities={entities}
         labels={labels}
         openCollision={collision}
-        style={{ height: '100dvh', userSelect: 'none', WebkitUserSelect: 'none' }}
+        style={{
+          height: '100dvh',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          // Read once at the mount the `key` above forces: the whole
+          // choreography in deliberate slow motion.
+          ...(slow
+            ? ({ '--vitrina-dur-flight': '2s', '--vitrina-dur-panel': '1.5s' } as CSSProperties)
+            : {}),
+        }}
         // The panel is a shell: everything below is the playground's, including the
         // close button (the library renders no buttons; Escape works regardless).
         // The body length varies by entity so the panel's between-objects HEIGHT
@@ -128,7 +158,11 @@ function App() {
             </text>
           </svg>
         )}
-      />
+      >
+        {/* The library's own optional chrome: zoom out/in + view toggle over
+            useVitrina(). Unstyled by design; index.html positions it. */}
+        <VitrinaControls />
+      </Vitrina>
     </>
   );
 }

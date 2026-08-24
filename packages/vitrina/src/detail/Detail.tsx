@@ -49,7 +49,7 @@
  * waiting for the object to land.
  */
 
-import type { CSSProperties, RefObject } from 'react';
+import type { RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
 import type {
@@ -59,7 +59,6 @@ import type {
   VitrinaProps,
   VitrinaView,
 } from '../types';
-import { DETAIL_OBJECT_SIZE } from '../defaults';
 import type { DetailCopy, PanelPhase } from './machine';
 
 /** reveal → the entrance wipe plays; cover → the exit wipe; none → static (a relay, or settled). */
@@ -98,89 +97,14 @@ export interface DetailProps {
   relayRef: RefObject<HTMLDivElement | null>;
 }
 
-const PANEL_LAYER_STYLE: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  pointerEvents: 'none',
-  zIndex: 'var(--vitrina-z-panel, 40)',
-};
-
-const PANEL_STYLE: CSSProperties = {
-  position: 'absolute',
-  top: 0,
-  right: 0,
-  bottom: 0,
-  width: 'var(--vitrina-panel-width, 50%)',
-  maxWidth: '100%',
-  boxSizing: 'border-box',
-  pointerEvents: 'auto',
-  outline: 'none',
-};
-
-const CARD_STYLE: CSSProperties = {
-  width: '100%',
-  height: '100%',
-  boxSizing: 'border-box',
-  overflowY: 'auto',
-  overflowX: 'hidden',
-  scrollbarGutter: 'stable',
-  overscrollBehavior: 'contain',
-};
-
-const SLOT_STYLE: CSSProperties = {
-  position: 'relative',
-  width: `var(--vitrina-detail-object, ${DETAIL_OBJECT_SIZE}px)`,
-  height: `var(--vitrina-detail-object, ${DETAIL_OBJECT_SIZE}px)`,
-};
-
 /*
- * A flight visual: the box (left/top/width/height) is set ONCE by the
- * orchestrator to the destination's; only x/y/scaleX/scaleY animate — no layout
- * per frame. Origin at the top-left, so scale is the plain ratio of sizes.
+ * All structure — the panel layer's position and stacking, the wrapper, the
+ * card's scroll+mask, the slot's box, the portal wrapper (the ONE element that
+ * carries `--vitrina-z-flight`: the node that competes against the panel in the
+ * document's root stacking context), the inner layers and the flight visuals —
+ * lives in base.css, keyed on these data attributes. Inline here is only what
+ * the machine computes per commit: which copy is visible.
  */
-const flightVisualStyle: CSSProperties = {
-  position: 'fixed',
-  left: 0,
-  top: 0,
-  pointerEvents: 'none',
-  transformOrigin: '0 0',
-  willChange: 'transform',
-};
-
-/*
- * The portal wrapper — and the ONE element that carries `--vitrina-z-flight`.
- * This is the node that competes against the panel, so the token has to live
- * HERE, not on the inner layers.
- *
- * Why: the panel layer (z = --vitrina-z-panel) sits inside the Vitrina root,
- * which is `position: relative` with NO z-index and therefore creates no
- * stacking context — so the panel emerges into the document's ROOT stacking
- * context and competes there at level 40. This wrapper is `position: fixed`
- * (which always establishes a stacking context) on `document.body`; left at
- * `z-index: auto` it would join the root context at level 0 and — by paint
- * order — lose to the panel's positive z, no matter what z the inner layers
- * carry (a child can't escape its parent's level). Giving the WRAPPER
- * --vitrina-z-flight (> the panel's) makes the flight win the root context
- * outright, from the first frame, before the panel finishes revealing.
- */
-const FLIGHT_PORTAL_STYLE: CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  pointerEvents: 'none',
-  zIndex: 'var(--vitrina-z-flight, 50)',
-};
-
-/*
- * The two inner layers need NO z-index: the wrapper already outranks the panel,
- * and between themselves the active clone (rendered after the relay in the DOM)
- * paints over the relay by document order — cosmetic anyway, they are different
- * entities flying opposite ways and never overlap at the same point.
- */
-const LAYER_STYLE: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  pointerEvents: 'none',
-};
 
 export function Detail({
   entity,
@@ -219,17 +143,12 @@ export function Detail({
      * hit-test. Both the active clone and the relay are FLYING objects on the
      * flight rung; two layers only so they can move independently (crossfade).
      */
-    <div
-      data-vitrina-root=""
-      data-vitrina-flight-portal=""
-      aria-hidden="true"
-      style={FLIGHT_PORTAL_STYLE}
-    >
-      <div data-vitrina-relay-layer="" style={LAYER_STYLE}>
+    <div data-vitrina-root="" data-vitrina-flight-portal="" aria-hidden="true">
+      <div data-vitrina-relay-layer="">
         <div
           ref={relayRef}
           data-vitrina-relay=""
-          style={{ ...flightVisualStyle, visibility: relayFlying ? 'visible' : 'hidden' }}
+          style={{ visibility: relayFlying ? 'visible' : 'hidden' }}
         >
           {relayEntity &&
             renderObject(relayEntity, {
@@ -241,11 +160,11 @@ export function Detail({
         </div>
       </div>
 
-      <div data-vitrina-flight-layer="" style={LAYER_STYLE}>
+      <div data-vitrina-flight-layer="">
         <div
           ref={flightRef}
           data-vitrina-flight=""
-          style={{ ...flightVisualStyle, visibility: copy === 'flight' ? 'visible' : 'hidden' }}
+          style={{ visibility: copy === 'flight' ? 'visible' : 'hidden' }}
         >
           {renderObject(entity, objectContext)}
         </div>
@@ -255,7 +174,7 @@ export function Detail({
 
   return (
     <>
-      <div data-vitrina-detail="" data-vitrina-panel-phase={panel} style={PANEL_LAYER_STYLE}>
+      <div data-vitrina-detail="" data-vitrina-panel-phase={panel}>
         <div
           ref={panelRef}
           data-vitrina-panel=""
@@ -267,9 +186,8 @@ export function Detail({
           role="dialog"
           aria-label={labels.objectLabel(entity)}
           tabIndex={-1}
-          style={PANEL_STYLE}
         >
-          <div ref={cardRef} data-vitrina-panel-card="" style={CARD_STYLE}>
+          <div ref={cardRef} data-vitrina-panel-card="">
             {/*
               The active object's copy is always in the DOM so the slot can be
               measured as the flight's destination (a `display: none` box has no
@@ -278,7 +196,7 @@ export function Detail({
             <div
               ref={slotRef}
               data-vitrina-slot=""
-              style={{ ...SLOT_STYLE, visibility: copy === 'panel' ? 'visible' : 'hidden' }}
+              style={{ visibility: copy === 'panel' ? 'visible' : 'hidden' }}
             >
               {renderObject(entity, objectContext)}
             </div>
