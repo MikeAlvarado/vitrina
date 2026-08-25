@@ -56,6 +56,7 @@ import { Grid } from './grid/Grid';
 import { Detail } from './detail/Detail';
 import type { PanelAnim } from './detail/Detail';
 import { activeCopy, hiddenInstancesOf, initialDetail, panelPresent, transition } from './detail/machine';
+import { isProduction } from './env';
 import type { DetailState, PanelPhase } from './detail/machine';
 
 const clampIndex = (index: number, count: number): number =>
@@ -63,23 +64,6 @@ const clampIndex = (index: number, count: number): number =>
 
 /** Stable default so an omitted `dismissOn` never churns the effects. */
 const DEFAULT_DISMISS: readonly VitrinaDismiss[] = ['escape'];
-
-/*
- * Development or production, without demanding Node's types: the literal
- * `process.env.NODE_ENV` is the one token every bundler rewrites (and Node
- * provides); the local ambient declaration keeps consumers whose tsconfig pins
- * `types` compiling. Where neither bundler nor Node exists (unbundled browser
- * ESM) the read throws and we assume development — the coverage warning below
- * is advice, and advice belongs in development.
- */
-declare const process: { env: { NODE_ENV?: string } } | undefined;
-function isProduction(): boolean {
-  try {
-    return process!.env.NODE_ENV === 'production';
-  } catch {
-    return false;
-  }
-}
 
 /** A click waiting for the controlled `activeId` prop to follow it. */
 interface PendingOrigin {
@@ -93,6 +77,8 @@ export function Vitrina({
   instances,
   layout,
   renderObject,
+  renderCard,
+  renderGridHeader,
   renderAbove,
   renderBeside,
   renderDetail,
@@ -1056,6 +1042,8 @@ export function Vitrina({
             instances={instances}
             layout={resolvedLayout}
             renderObject={renderObject}
+            renderCard={renderCard}
+            renderGridHeader={renderGridHeader}
             labels={labels}
             reduced={reduced}
             session={session}

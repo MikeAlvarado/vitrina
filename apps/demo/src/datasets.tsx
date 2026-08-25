@@ -27,6 +27,10 @@ export interface Dataset {
   entities: VitrinaEntity[];
   labels: VitrinaLabels;
   renderObject: (entity: VitrinaEntity) => ReactNode;
+  /** The grid card's copy, under the object. The grid is the catalogue view. */
+  renderCard: (entity: VitrinaEntity) => ReactNode;
+  /** The catalogue's heading, inside the grid's own scroll container. */
+  renderGridHeader: () => ReactNode;
   renderAbove: (entity: VitrinaEntity) => ReactNode;
   renderDetail: (entity: VitrinaEntity) => ReactNode;
   renderBelow: (entity: VitrinaEntity, ctx: VitrinaDetailContext) => ReactNode;
@@ -55,6 +59,18 @@ const stepper = (ctx: VitrinaDetailContext, index: number, total: number): React
       {String(index + 1).padStart(2, '0')} / {String(total).padStart(2, '0')}
     </span>
   </footer>
+);
+
+/*
+ * Shared by both catalogues. It renders INSIDE the grid's scroll container
+ * (`renderGridHeader`), so it scrolls away with the cards instead of sitting
+ * pinned over them — which is exactly what it would do as `children`.
+ */
+const catalogueHead = (title: string, count: number): ReactNode => (
+  <div className="grid-head">
+    <h2>{title}</h2>
+    <p>{count} objects · one card per object, named</p>
+  </div>
 );
 
 const spec = (term: string, value: ReactNode): ReactNode => (
@@ -98,6 +114,23 @@ export const minerals: Dataset = {
     // draggable={false} because a native image drag would eat the plane's.
     <img src={specimenImage(specimenOf(entity).id)} alt="" draggable={false} />
   ),
+  /*
+   * The grid is the plane's accessible alternative — and the view a visitor who
+   * prefers reduced motion can be locked to. Twenty-four unnamed photographs
+   * are a puzzle there; the name and the locality are what make it a catalogue.
+   * It cannot be a branch of `renderObject`: that node is the card's button, at
+   * a fixed cell, and it is what flies to and from the plane.
+   */
+  renderCard: (entity) => {
+    const s = specimenOf(entity);
+    return (
+      <>
+        <p className="card-name">{s.name}</p>
+        <p className="card-sub">{s.locality}</p>
+      </>
+    );
+  },
+  renderGridHeader: () => catalogueHead('Mineral specimens', SPECIMENS.length),
   renderAbove: (entity) => {
     const s = specimenOf(entity);
     return (
@@ -166,6 +199,16 @@ export const emoji: Dataset = {
   renderObject: (entity) => (
     <img src={glyphImage(glyphOf(entity).character)} alt="" draggable={false} />
   ),
+  renderCard: (entity) => {
+    const g = glyphOf(entity);
+    return (
+      <>
+        <p className="card-name">{g.name}</p>
+        <p className="card-sub">{g.codePoint}</p>
+      </>
+    );
+  },
+  renderGridHeader: () => catalogueHead('Emoji', GLYPHS.length),
   renderAbove: (entity) => {
     const g = glyphOf(entity);
     return (

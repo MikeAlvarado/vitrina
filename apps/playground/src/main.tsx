@@ -7,6 +7,7 @@ import type {
   VitrinaDismiss,
   VitrinaEntity,
   VitrinaLabels,
+  VitrinaOpenCollision,
   VitrinaPanelSide,
 } from 'vitrina';
 
@@ -199,6 +200,34 @@ const renderBelow = (_: VitrinaEntity, ctx: VitrinaDetailContext) => (
   </footer>
 );
 
+// --- The GRID's holes: the catalogue view's copy ------------------------------
+// The grid is the accessible alternative to the plane (and the locked view under
+// reducedMotion: 'grid'), so it is the whole catalogue for whoever cannot take
+// the plane — unnamed objects there say nothing. Neither of these can be a
+// branch of renderObject: the card's button is the Flip element at a fixed cell,
+// so anything inside it would sit on the object and fly with it.
+const renderCard = (entity: VitrinaEntity) => {
+  const item = entity.data as Item;
+  return (
+    <div style={{ display: 'grid', gap: 2, textAlign: 'center', fontSize: 13 }}>
+      <span>{entity.id}</span>
+      <span style={{ opacity: 0.6, fontSize: 11, letterSpacing: '0.08em' }}>{item.code}</span>
+    </div>
+  );
+};
+
+// Inside the grid's own scroll container: it scrolls WITH the cards. As
+// `children` it would be a sibling of the view, pinned over a catalogue moving
+// under it.
+const renderGridHeader = () => (
+  <div style={{ display: 'grid', gap: 4, paddingBottom: 8 }}>
+    <h2 style={{ margin: 0, fontSize: 20 }}>Catálogo</h2>
+    <p style={{ margin: 0, opacity: 0.6, fontSize: 13 }}>
+      {`${entities.length} objetos · una tarjeta por entidad`}
+    </p>
+  </div>
+);
+
 // La ✕: the library guarantees the region never scrolls; index.html decides
 // where in it the button sits (over the seam on desktop, top-right under 640px).
 const renderClose = (ctx: VitrinaDetailContext) => (
@@ -209,8 +238,8 @@ const renderClose = (ctx: VitrinaDetailContext) => (
 
 // --- The configuration the controls edit, and the two presets ----------------
 
-type Hole = 'above' | 'beside' | 'detail' | 'below' | 'close';
-const HOLES: Hole[] = ['above', 'beside', 'detail', 'below', 'close'];
+type Hole = 'above' | 'beside' | 'detail' | 'below' | 'close' | 'card' | 'header';
+const HOLES: Hole[] = ['above', 'beside', 'detail', 'below', 'close', 'card', 'header'];
 const DISMISSALS: VitrinaDismiss[] = ['escape', 'outside', 'planeDrag'];
 const SIDES: VitrinaPanelSide[] = ['left', 'right', 'top', 'bottom'];
 
@@ -237,7 +266,7 @@ const PRESETS: Record<'vitrina' | 'catálogo', PanelConfig> = {
     beside: 'start',
     modal: 'off',
     dismiss: { escape: true, outside: false, planeDrag: false },
-    holes: { above: false, beside: false, detail: true, below: false, close: false },
+    holes: { above: false, beside: false, detail: true, below: false, close: false, card: false, header: false },
   },
   // The Mediterra panel, rebuilt from props alone (the exam: nothing here may
   // need src/). Full width under 640px and half above; modal rides the same
@@ -249,7 +278,7 @@ const PRESETS: Record<'vitrina' | 'catálogo', PanelConfig> = {
     beside: 'start',
     modal: 'compact',
     dismiss: { escape: true, outside: false, planeDrag: false },
-    holes: { above: true, beside: true, detail: true, below: true, close: true },
+    holes: { above: true, beside: true, detail: true, below: true, close: true, card: true, header: true },
   },
 };
 
@@ -258,7 +287,7 @@ function App() {
   // browser (the gate proves the machine, never the feel). Slow motion remounts
   // (key): the motion tokens are read once at mount. The PANEL config does NOT
   // remount — panelSide and the rest change hot, mid-flight too.
-  const [collision, setCollision] = useState<'serialize' | 'crossfade'>('serialize');
+  const [collision, setCollision] = useState<VitrinaOpenCollision>('serialize');
   const [theme, setTheme] = useState<Theme>('paper');
   const [slow, setSlow] = useState(false);
   // img (default) vs emoji-as-text: the A/B that separates a library bug from a
@@ -401,7 +430,7 @@ function App() {
         )}
         {row(
           'openCollision',
-          (['serialize', 'crossfade'] as const).map((mode) => (
+          (['serialize', 'crossfade', 'none'] as const).map((mode) => (
             <button key={mode} type="button" onClick={() => setCollision(mode)} style={mini(collision === mode)}>
               {mode}
             </button>
@@ -450,6 +479,8 @@ function App() {
             ? ({ '--vitrina-dur-flight': '2s', '--vitrina-dur-panel': '1.5s' } as CSSProperties)
             : {}),
         }}
+        renderCard={config.holes.card ? renderCard : undefined}
+        renderGridHeader={config.holes.header ? renderGridHeader : undefined}
         renderAbove={config.holes.above ? renderAbove : undefined}
         renderBeside={config.holes.beside ? renderBeside : undefined}
         renderDetail={config.holes.detail ? renderDetail : undefined}

@@ -112,6 +112,8 @@ export function App() {
           panelSide={config.panelSide}
           modal={compact}
           renderObject={dataset.renderObject}
+          renderCard={dataset.renderCard}
+          renderGridHeader={dataset.renderGridHeader}
           renderAbove={dataset.renderAbove}
           renderDetail={dataset.renderDetail}
           renderBelow={dataset.renderBelow}

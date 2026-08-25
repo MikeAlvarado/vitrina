@@ -108,9 +108,27 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
   `scrollLeft`. During a flight `overflow-y` is clipped too — a transformed card extends
   the scrollable area and flickers the scrollbar.
 - Cell/gap are `--vitrina-grid-cell` / `--vitrina-grid-gap` (240 / 80 defaults) so a theme
-  can retune them under media queries; inline styles cannot.
+  can retune them under media queries; inline styles cannot. `--vitrina-card-gap` (12) is
+  the object↔card-content gap: an object's distance to ITS caption is not the distance
+  between two cards.
 - `labels.grid` is optional and falls back to `labels.viewport` — adding a required
   label would have broken every existing consumer's `labels` object.
+- **The grid has TWO composition holes of its own (0.2.0), and THREE nodes per cell.**
+  `renderCard(entity, ctx)` fills the card beside the object; `renderGridHeader()` fills
+  a full-row header INSIDE the scroll container. Why holes and not a `ctx.view` branch of
+  `renderObject`: the card's BUTTON is the Flip element at a fixed
+  `--vitrina-grid-cell`, so anything inside it sits on the object and travels with it
+  into the plane. Structure: `[data-vitrina-grid-item]` (the cell, a flex column) >
+  `[data-vitrina-card]` (the button, `flex: none` so a tall caption cannot squeeze the
+  box the Flip measured) + `[data-vitrina-card-content]` (the caption, a SIBLING).
+  Why the header is not `children`: `children` mounts as a sibling of the VIEW, outside
+  the box that scrolls, so a heading there stays pinned over a catalogue moving under it.
+  The card renders no control of its own — the object button is the card's only control
+  (a button cannot nest one), and interactive content in `renderCard` is a sibling of it.
+  Both holes are grid-only, never called in plane view, and with neither given the grid
+  emits exactly the DOM it always did plus the item wrapper. The driver is accessibility,
+  not decoration: under `reducedMotion: 'grid'` this view IS the catalogue for a visitor
+  who cannot take the plane, and unnamed objects tell them nothing.
 - `reducedMotion: 'grid'` locks only when the visitor prefers reduced motion;
   `viewLocked` on the API tells chrome to hide the toggle and the zoom (all no-ops).
 
@@ -275,6 +293,18 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
     layers. A crossfade only starts from a settled `shown`; opening while still
     flying/relaying parks in `queued` and `drain`s once the slot is clean (relay gone
     AND the active object `shown`).
+  - **`none`** (0.2.0): no flight and NO RELAY — `relayInto` goes straight to `shown`
+    with `relaying: null`, so the outgoing object is back on the plane and the incoming
+    one is in the slot in the same commit. `relaying` must stay null: a relay with no
+    flight would leave a `relayLanded` nobody ever fires. It is a swap INSIDE an open
+    panel only — the first open still flies (the `panel !== 'open'` branch never reads
+    the mode) — and a request arriving mid-flight still parks in `queued` rather than
+    cutting a tween; it lands settled when the flight does (`beginInOpen` honours the
+    mode too, for a queue drained across a mode change). Why it exists: `step()` between
+    two neighbours in `entities` is routinely a trip across the whole world, and
+    watching an object cross a plane nobody is looking at is slower than the swap it
+    illustrates. Mediterra's real behaviour, which neither serialize nor crossfade could
+    express.
 - The panel's TEXT content crosses on its own: `active` flips to the new entity the
   instant a relay starts, and the content is rendered for `active` and **never keyed by
   id** — a remount would kill any crossfade the consumer runs on the text (the old would
@@ -522,6 +552,26 @@ unrevealed ∩ centre-in-inset-frame, input order preserved; callers union `ente
 into their revealed set (permanence lives in the caller's set, the pass never
 re-emits a revealed id). `staggerDelays` starts at 0 with seeded gaps in [30, 80) ms.
 
+**The world in use is `selectWorld`'s ONE decision, and explicit `instances` turn the
+compact world OFF (0.2.0).** Instance coordinates are absolute world px and pan is
+clamped so the world always covers the viewport; swapping in `compactWorld` under
+coordinates computed for the wide world puts everything past the compact width outside
+the pan bounds — unreachable forever, on phones (~50% of Mediterra's instances). So:
+`selectWorld(layout, width, explicitInstances)` returns `{ world, sizeFactor, compact }`
+— the world, the size factor AND the compact flag the generation keys on, one answer
+from one place — and with `instances` given it is always the regular world at every
+width. Generated instances keep compact: they are re-generated INTO whichever world is
+in use, clamped to it, so they cannot fall out.
+
+The world box IS the reachability test (`outOfWorld`, PURE): the visible window sweeps
+all of [0, world] as the pan travels its bounds, and covers more only when the scaled
+world cannot fill an axis — so inside the box is always reachable, outside it never is.
+Any instance outside the world in use gets ONE dev-only `console.warn` naming it
+(`isProduction()` in `src/env.ts`, shared with the panel-coverage warning), keyed on the
+offending SET so StrictMode says it once and a new set says it again. Accepting a
+configuration that guarantees invisible content in silence is the worst of the three
+possible behaviours.
+
 ## Testing
 
 - Pure modules: exhaustive, no DOM. Boundary cases explicitly (zero entities, one
@@ -535,12 +585,26 @@ re-emits a revealed id). `staggerDelays` starts at 0 with seeded gaps in [30, 80
 - **View test** (`tests/view.test.tsx`): grid markup (one card per entity, no text beyond
   `renderObject`'s, both overflow axes), controlled/uncontrolled toggle, the `'grid'` lock,
   and the round trip: pan and revealed set identical on return, `isRevealed` true from the
-  first render back, cards paired by exact shown instance id.
+  first render back, cards paired by exact shown instance id. Plus the composition holes:
+  `renderCard` mounts inside EVERY item as a SIBLING of the button (never a descendant —
+  the button's text stays `renderObject`'s alone and it keeps the `data-flip-id`), one
+  control per card, the ctx it receives (instance, `view: 'grid'`, `isActive` following
+  the panel), the header inside the scroll container and `children` outside it, and both
+  holes silent in plane view. Anything the render props record is keyed by ENTITY, never
+  appended — StrictMode renders twice and the question is what each card got.
+- **World test** (`tests/world.test.tsx`): nothing is ever outside the pan bounds. The
+  reachable region (the visible window at the extreme pans, unioned) covers the whole
+  world box at every viewport and zoom step; every instance — explicit AND generated — is
+  `instanceVisible` inside it at 320…1920 px; the same explicit list against
+  `compactWorld` strands a third of itself (the bug, pinned); the plane really mounts the
+  regular world at a phone width with `instances` given and the compact one without; and
+  the dev warning names the offenders once and stays silent when everything is inside.
 - **Machine test** (`tests/machine.test.ts`, pure): every transition pinned, no-ops return
   the same reference, the panel never re-covers on a swap, the full arc is symmetric
   (`waiting→in→shown` on open mirrored by `leaving→out` on close, the panel `covering`
   across both close phases), and a 20 000-step seeded random walk per collision mode
-  asserts the invariant on every reachable state.
+  asserts the invariant on every reachable state — `none`'s walk additionally asserts
+  that `relaying` is NEVER set and every in-panel swap lands `shown` in one step.
 - **Detail DOM test** (`tests/detail.test.tsx`): the panel reveals once and covers once
   across A→B→C (the decoupling), the open/close MIRROR (Escape covers the panel FIRST with
   the clone floating above it, THEN the object flies home and lands on the plane — not the
@@ -609,12 +673,26 @@ packages/vitrina build` first; `pnpm -C apps/demo preview` builds and serves it)
      rhythm / intro feel still need the deliberate real-browser pass
 - [ ] 5. Grid view + Flip toggle — code complete, gate green (`tests/view.test.tsx`,
      teardown across repeated toggles); the flight itself needs the real-browser check
-     (since step 7 the playground mounts `<VitrinaControls>`, which has the toggle)
+     (since step 7 the playground mounts `<VitrinaControls>`, which has the toggle).
+     0.2.0 added `renderCard` / `renderGridHeader` (the item wrapper is new DOM): the
+     real-browser check now also covers a card with copy under it — the Flip must still
+     fly from and to the BUTTON's box with the caption staying put in the cell, rows of
+     uneven caption length must not shift the objects, and the header must scroll away
+     with the cards instead of pinning. Also: a card with nothing shown to fly from
+     fades in as ONE thing, object and copy together (`onEnter` animates both). That
+     pairing is real-browser-only — under StrictMode the grid's flight context is built,
+     reverted and rebuilt, and the second run has no entering elements to call it.
+     Already smoke-checked in a live tab (static layout only — rAF is frozen there, so
+     nothing about the flight or the fade): header 880px across all three 240px columns
+     and scrolling with the cards (200px of scroll moved it 200px, `scrollLeft` still 0),
+     item a 12px-gap flex column measuring 282 = 240 + 12 + 30, card `flex: 0 0 auto` at
+     exactly 240×240 with the copy BELOW and outside the button, one control per card,
+     a click still opening the panel.
 - [ ] 6. Detail panel + object state machine, panel/object lifecycles DECOUPLED
      (panel uncovers once, covers once, holds still across object swaps), configurable
-     open collision (serialize/crossfade), panel entrance wipe, between-objects height
+     open collision (serialize/crossfade/none), panel entrance wipe, between-objects height
      tween — code complete, gate green (`tests/machine.test.ts`, `tests/detail.test.tsx`
-     incl. both collision modes and the reveal-once/cover-once check, teardown extended
+     incl. all three collision modes and the reveal-once/cover-once check, teardown extended
      with open/close/relay/unmount-mid-flight); the flight, serialize vs crossfade feel,
      the wipe choreography (`--vitrina-dur-flight` at 2s for slow motion), the height
      tween, the panel beside a live plane and the focus ring need the real-browser check
@@ -644,6 +722,10 @@ packages/vitrina build` first; `pnpm -C apps/demo preview` builds and serves it)
      + overflow-x on the card).
      **Reconsider whether crossfade still earns its place:** with the panel now still,
      serialize may feel complete on its own — a real-browser call, per the prompt.
+     0.2.0 added `'none'` (the playground's collision toggle has all three): check that
+     the swap reads as instant and deliberate rather than as a dropped frame — the panel
+     holds, the content crosses, the outgoing object is back on the plane in the same
+     frame — and that ← / → at speed never leaves a copy behind on either side.
 - [ ] 7. Themes, `base.css`, `<VitrinaControls>`, reduced-motion paths — code complete,
      gate green (`tests/styles.test.ts` pins base.css structural/colorless/no-will-change
      and the theme token parity; `tests/controls.test.tsx` pins the three buttons, the
@@ -691,7 +773,11 @@ packages/vitrina build` first; `pnpm -C apps/demo preview` builds and serves it)
      Real-browser checks still pending — the automated tab freezes rAF, so nothing
      below is about feel: drag/inertia on the demo's own plane, the reveal rhythm at
      the demo's `count`, the flight into the panel at both `--vitrina-panel-size`
-     breakpoints, the grid toggle, and the theme switch mid-flight. Plus, from the
+     breakpoints, the grid toggle, and the theme switch mid-flight. Since 0.2.0 both
+     datasets fill the grid's holes (`renderCard` = name + locality / code point,
+     `renderGridHeader` = the catalogue heading): check the toggle INTO the grid with
+     captions present — objects must not shift between rows of uneven caption length —
+     and that the two-line clamp on `.card-sub` holds for the longest locality. Plus, from the
      chrome pass: the focus ring (2px / 7px off / 13px radius, ink mixed 86% toward
      the page) on a plane object, on a grid card (offset drops to 3px — a card has no
      air around it) and on a control chip, at a DESKTOP width; and the control strip's

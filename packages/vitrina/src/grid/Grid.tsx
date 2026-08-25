@@ -1,9 +1,22 @@
 /*
  * The grid view: the same objects, one card per entity, laid out as a grid that
- * scrolls natively. No chrome — no heading, no copy, no controls: it is the
- * plane's list with another layout, and the accessible alternative to it (every
- * card is in the tab order, revealed or not). Internal — consumers mount
- * `<Vitrina>`.
+ * scrolls natively. It is the plane's list with another layout, and the
+ * accessible alternative to it (every card is in the tab order, revealed or
+ * not), which is why it has two composition holes of its own — a grid of
+ * unnamed objects says nothing, and under `reducedMotion: 'grid'` this view IS
+ * the catalogue. Internal — consumers mount `<Vitrina>`.
+ *
+ * The library still ships no copy: `renderCard` fills each card beside the
+ * object, `renderGridHeader` fills a full-row header INSIDE the scroll
+ * container (`children` mounts outside it, so a heading there would stay pinned
+ * over a catalogue scrolling under it).
+ *
+ * THREE nodes per card, and the middle one is the reason `renderCard` is not a
+ * `ctx.view` branch of `renderObject`: the item is the grid cell, the BUTTON
+ * inside it is the object's box — exactly `--vitrina-grid-cell`, and the
+ * element that Flips to and from the plane — and the card content is a SIBLING
+ * of that button. Rendered inside it, a caption would sit on the object and
+ * travel with it into the plane.
  *
  * Each card Flips from the plane object it stands for: the SHOWN instance of its
  * entity closest to the viewport centre at the moment of the toggle. An entity
@@ -33,6 +46,10 @@ export interface GridProps {
   instances?: VitrinaInstance[];
   layout: Required<VitrinaLayout>;
   renderObject: VitrinaProps['renderObject'];
+  /** The card's content beside the object — a sibling of the flying button. */
+  renderCard?: VitrinaProps['renderCard'];
+  /** A full-row header inside the scroll container, above the cards. */
+  renderGridHeader?: VitrinaProps['renderGridHeader'];
   labels: VitrinaLabels;
   reduced: boolean;
   session: Session;
@@ -51,9 +68,10 @@ export interface GridProps {
  * All structure — the container's grid layout, BOTH overflow axes (leaving X
  * unset would couple it to Y and make this a valid horizontal scroller that a
  * native scroll-into-view can hand a real scrollLeft), the scrollbar gutter,
- * the stacking rung, the card's cell box — lives in base.css, keyed on the data
- * attributes; cell and gap are custom properties a theme can retune, under
- * media queries too. Inline here is only the per-commit visibility.
+ * the stacking rung, the item's column, the card's cell box and the header's
+ * full-row span — lives in base.css, keyed on the data attributes; cell, gap
+ * and the item's own gap are custom properties a theme can retune, under media
+ * queries too. Inline here is only the per-commit visibility.
  */
 
 export function Grid({
@@ -61,6 +79,8 @@ export function Grid({
   instances,
   layout,
   renderObject,
+  renderCard,
+  renderGridHeader,
   labels,
   reduced,
   session,
@@ -168,10 +188,24 @@ export function Grid({
         prune: true,
         duration: VIEW_FLIP_SECONDS,
         ease: motion().easeFlight,
-        // Cards with no shown object to come from.
+        /*
+         * Cards with no shown object to come from. The card's COPY fades with
+         * its object — a caption already sitting there under an object still
+         * fading in reads as two unrelated arrivals. The object node stays in
+         * the target list (it is the one Flip handed us); the caption joins it.
+         * Not the item wrapper: keeping both nodes explicit keeps the fade off
+         * a box whose only job is layout, and keeps the OBJECT in the target
+         * list, which is what the view test can still see. (The pairing of the
+         * copy is only observable in a real browser: under StrictMode this
+         * context is built, reverted and rebuilt, and by the second run there
+         * are no entering elements left to call this.)
+         */
         onEnter: (elements) =>
           gsap.fromTo(
-            elements,
+            elements.flatMap((el) => {
+              const copy = el.parentElement?.querySelector('[data-vitrina-card-content]');
+              return copy ? [el, copy] : [el];
+            }),
             { opacity: 0 },
             { opacity: 1, duration: VIEW_FLIP_SECONDS, ease: 'power2.out' },
           ),
@@ -191,34 +225,47 @@ export function Grid({
       role="region"
       aria-label={labels.grid ?? labels.viewport}
     >
-      {entities.map((entity) => (
-        <button
-          key={entity.id}
-          ref={cardRef(entity.id)}
-          type="button"
-          data-vitrina-object=""
-          data-vitrina-card=""
-          data-vitrina-instance={representative(entity.id)}
-          data-vitrina-entity={entity.id}
-          data-flip-id={representative(entity.id)}
-          aria-label={labels.objectLabel(entity)}
-          onClick={() => onOpen(entity.id, representative(entity.id))}
-          // React owns `visibility`; GSAP owns opacity/scale. Structure is base.css's.
-          style={{ visibility: hiddenIds.has(representative(entity.id)) ? 'hidden' : undefined }}
-        >
-          {/* Same two-node structure as the plane instance: the button is the
-              box, the content node centres renderObject's return (cards never
-              pop, but the content rules key on this node). */}
-          <span data-vitrina-object-content="">
-            {renderObject(entity, {
-              instanceId: representative(entity.id),
-              isActive: entity.id === activeEntityId,
-              isRevealed: true,
-              view: 'grid',
-            })}
-          </span>
-        </button>
-      ))}
+      {/* The header scrolls WITH the cards: it is inside this container, spanning
+          the full row. Nothing of the library's is rendered when the hole is
+          empty — not even the wrapper. */}
+      {renderGridHeader && <div data-vitrina-grid-header="">{renderGridHeader()}</div>}
+      {entities.map((entity) => {
+        const instanceId = representative(entity.id);
+        const ctx = {
+          instanceId,
+          isActive: entity.id === activeEntityId,
+          isRevealed: true,
+          view: 'grid' as const,
+        };
+        return (
+          // The grid cell. The button inside it keeps the object's exact box (it
+          // is what flies); the card content sits beneath it, out of the flight.
+          <div key={entity.id} data-vitrina-grid-item="">
+            <button
+              ref={cardRef(entity.id)}
+              type="button"
+              data-vitrina-object=""
+              data-vitrina-card=""
+              data-vitrina-instance={instanceId}
+              data-vitrina-entity={entity.id}
+              data-flip-id={instanceId}
+              aria-label={labels.objectLabel(entity)}
+              onClick={() => onOpen(entity.id, instanceId)}
+              // React owns `visibility`; GSAP owns opacity/scale. Structure is base.css's.
+              style={{ visibility: hiddenIds.has(instanceId) ? 'hidden' : undefined }}
+            >
+              {/* Same two-node structure as the plane instance: the button is the
+                  box, the content node centres renderObject's return (cards never
+                  pop, but the content rules key on this node). */}
+              <span data-vitrina-object-content="">{renderObject(entity, ctx)}</span>
+            </button>
+            {/* The card's own content: the entity's, once per card — the grid is
+                the list of what exists, not of the copies. It carries no control
+                of its own; the object above it is the card's button. */}
+            {renderCard && <div data-vitrina-card-content="">{renderCard(entity, ctx)}</div>}
+          </div>
+        );
+      })}
     </div>
   );
 }

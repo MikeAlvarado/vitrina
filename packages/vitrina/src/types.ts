@@ -39,7 +39,13 @@ export interface VitrinaLayout {
    * rather than the same objects further apart. Palmer uses 4645×3044.
    */
   world?: { w: number; h: number };
-  /** Same, for viewports below `compactBreakpoint`. */
+  /**
+   * Same, for viewports below `compactBreakpoint`. IGNORED when the consumer
+   * passes `instances`: absolute positions and the world they were computed
+   * against are one decision, and swapping the world under them would strand
+   * every instance beyond the compact width outside the pan bounds — invisible
+   * on a phone, with no gesture that reaches it. See `VitrinaProps.instances`.
+   */
   compactWorld?: { w: number; h: number };
   compactBreakpoint?: number;
   /** Target instance count. Generation fills up to this. */
@@ -70,14 +76,21 @@ export type VitrinaView = 'plane' | 'grid';
 export type VitrinaDetailPhase = 'idle' | 'opening' | 'open' | 'closing';
 
 /**
- * What happens when an object is opened while another is already open.
+ * What happens when an object is opened while another is already open. It says
+ * nothing about the FIRST open — that one always flies, from the object that was
+ * clicked into the panel it is uncovering.
  * - 'serialize' (default): the current object flies back, then the new one flies
  *   in. Exactly one copy visible at every moment — the machine's invariant intact.
  * - 'crossfade': the current object dissolves in the panel while the new one flies
  *   in. Faster; the two that animate are always different entities, so no frame
  *   ever shows two copies of the same object.
+ * - 'none': no flight at all. The outgoing object reappears on the plane and the
+ *   incoming one appears in the slot, in the same commit. The panel does not
+ *   move either way, so the swap is the content changing and nothing else — what
+ *   a next/prev control (`ctx.step`) between two objects on opposite edges of the
+ *   world wants, where a flight is a long trip across a plane nobody is looking at.
  */
-export type VitrinaOpenCollision = 'serialize' | 'crossfade';
+export type VitrinaOpenCollision = 'serialize' | 'crossfade' | 'none';
 
 /** Which edge of the root the detail panel occupies. */
 export type VitrinaPanelSide = 'left' | 'right' | 'top' | 'bottom';
@@ -180,12 +193,50 @@ export interface VitrinaApi {
 export interface VitrinaProps {
   entities: VitrinaEntity[];
 
-  /** Omit and instances are generated. Provide and generation is skipped entirely. */
+  /**
+   * Omit and instances are generated. Provide and generation is skipped
+   * entirely — and so is `layout.compactWorld`: explicit positions dictate the
+   * world, at every viewport width, because the alternative is a phone that
+   * shrinks the world under coordinates it did not compute and leaves half of
+   * them unreachable. `layout.world` is therefore the world these instances are
+   * placed in, compact or not; size them for the smallest viewport you support.
+   * In development, any instance whose box falls outside the world in use is
+   * reported with `console.warn` (whatever the cause — an explicit list or a
+   * hand-built one), because such an object can never be panned to.
+   */
   instances?: VitrinaInstance[];
   layout?: VitrinaLayout;
 
   /** The object itself. Called once per instance. Must be pure and cheap. */
   renderObject: (entity: VitrinaEntity, ctx: VitrinaObjectContext) => ReactNode;
+
+  /**
+   * The grid card's content BESIDE the object — a name, a caption, whatever the
+   * catalogue needs. Called once per entity (the grid is the list of what
+   * exists, not of the copies), and only in grid view.
+   *
+   * It is a hole of its own instead of a branch of `renderObject` on `ctx.view`
+   * because the object's node in a card is the flight's element: it measures
+   * exactly `--vitrina-grid-cell` and it is what Flips to and from the plane, so
+   * anything rendered inside it would sit ON the object and travel with it. What
+   * this returns is a SIBLING of that node, inside the same card.
+   *
+   * It renders no control of its own: the object above it is the card's button
+   * (named by `labels.objectLabel`). Interactive content here is the consumer's
+   * — it cannot be nested inside that button, so it is a sibling of it.
+   */
+  renderCard?: (entity: VitrinaEntity, ctx: VitrinaObjectContext) => ReactNode;
+
+  /**
+   * A header INSIDE the grid's scroll container, above the cards, spanning the
+   * full row. `children` cannot do this job: it mounts as a sibling of the view,
+   * outside the container that scrolls, so a heading placed there stays pinned
+   * over a catalogue that scrolls under it.
+   *
+   * Grid view only — it is the one view with a document to head. Called on every
+   * render of the grid; `useVitrina()` resolves inside whatever it returns.
+   */
+  renderGridHeader?: () => ReactNode;
 
   /**
    * The panel's content holes. The library owns the shell, the flight, the slot

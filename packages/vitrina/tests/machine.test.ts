@@ -166,6 +166,56 @@ describe('open collision — crossfade', () => {
   });
 });
 
+describe("open collision — none", () => {
+  const n = (e: string, i?: string) => open(e, i ?? `${e}-0`, 'none');
+
+  it('opening B while A is shown: the swap is ONE commit — no flight, no relay layer', () => {
+    const settled = openSettled('a', 'a-0', 'none');
+    const s = transition(settled, n('b'));
+    expect(s).toMatchObject({
+      panel: 'open',
+      active: { entityId: 'b', instanceId: 'b-0' },
+      flight: 'shown',
+      relaying: null,
+      queued: null,
+    });
+    // B is the panel's copy from this commit; A is simply back on the plane —
+    // nothing is flying, so nothing but B's plane instance is hidden.
+    expect(activeCopy(s)).toBe('panel');
+    expect(hiddenInstancesOf(s)).toEqual(new Set(['b-0']));
+  });
+
+  it('the panel never moves for it: open → open, no re-cover and no re-wipe', () => {
+    let state = openSettled('a', 'a-0', 'none');
+    for (const action of [n('b'), n('c'), n('a')]) {
+      state = transition(state, action);
+      expect(state.panel).toBe('open');
+      expect(state.flight).toBe('shown');
+      expect(state.relaying).toBeNull();
+    }
+  });
+
+  it('the FIRST open still flies: the mode is about swaps inside an open panel', () => {
+    const s = run([n('a')]);
+    expect(s).toMatchObject({ panel: 'open', flight: 'waiting' });
+    expect(transition(s, revealed).flight).toBe('in');
+  });
+
+  it('a swap requested mid-flight waits its turn, then lands settled with no flight of its own', () => {
+    // A is still flying in; the request parks rather than cutting the tween.
+    const mid = run([n('a'), revealed, n('b')]);
+    expect(mid).toMatchObject({ active: { entityId: 'a' }, flight: 'in', queued: { entityId: 'b' } });
+    const after = transition(mid, landed);
+    expect(after).toMatchObject({ active: { entityId: 'b' }, flight: 'shown', relaying: null });
+  });
+
+  it('the close is untouched: it still mirrors the open', () => {
+    const s = run([n('a'), revealed, landed, n('b'), close()]);
+    expect(s).toMatchObject({ panel: 'covering', flight: 'leaving', active: { entityId: 'b' } });
+    expect(run([coverDone], s)).toMatchObject({ panel: 'covering', flight: 'out' });
+  });
+});
+
 describe('close — the mirror of open: panel covers FIRST, then the object flies home', () => {
   it('from shown with an origin: the object lifts to the flight layer (leaving) and the panel covers', () => {
     const s = transition(openSettled('a'), close());
@@ -293,6 +343,25 @@ describe('the invariant, under every sequence', () => {
       if (next.relaying && next.flight === 'in') concurrent++;
     });
     expect(concurrent).toBeGreaterThan(50);
+  });
+
+  it('none: well-formed throughout, and no relay is ever created', () => {
+    let swaps = 0;
+    walk('none', (prev, next) => {
+      // The mode's whole claim: nothing is ever handed to the relay layer, so
+      // there is no `relayLanded` waiting to arrive from a flight nobody runs.
+      expect(next.relaying).toBeNull();
+      if (
+        next.panel === 'open' &&
+        prev.panel === 'open' &&
+        next.active?.entityId !== prev.active?.entityId
+      ) {
+        // Every swap inside an open panel lands settled, in that one commit.
+        expect(next.flight).toBe('shown');
+        swaps++;
+      }
+    });
+    expect(swaps).toBeGreaterThan(40);
   });
 
   it('the full arc is reachable and symmetric: reveal→fly-in on open, cover→fly-home on close', () => {

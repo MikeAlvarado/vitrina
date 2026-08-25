@@ -33,6 +33,10 @@
  *   · serialize — the outgoing flies home FIRST (active waits), then the new one
  *     flies in. One copy visible at any moment.
  *   · crossfade — both fly at once, opposite directions. Two layers.
+ *   · none      — no flight and no relay: the outgoing is back on the plane and
+ *     the incoming is in the slot in the SAME commit. `flight` goes straight to
+ *     `shown`, `relaying` stays null (a relay with no flight would leave a
+ *     `relayLanded` nobody ever fires).
  *
  * The initial open's choreography is a machine fact, not a timer: the object is
  * `waiting` while the panel reveals, and flies in only once `revealed` fires —
@@ -53,7 +57,7 @@ export type PanelPhase = 'closed' | 'open' | 'covering';
  */
 export type FlightPhase = 'waiting' | 'in' | 'shown' | 'leaving' | 'out';
 
-export type OpenCollision = 'serialize' | 'crossfade';
+export type OpenCollision = 'serialize' | 'crossfade' | 'none';
 
 /** A request to open — kept verbatim when it has to wait its turn in `queued`. */
 export interface OpenRequest {
@@ -133,12 +137,22 @@ const reqOf = (a: Extract<DetailAction, { type: 'open' }>): OpenRequest => ({
   collision: a.collision,
 });
 
+/**
+ * Does a request opened INTO an already-open panel move anything? 'none' says no
+ * — the swap is a commit, not a choreography — and so does a request with no
+ * origin or no motion.
+ */
+const relayFlies = (r: OpenRequest): boolean =>
+  r.animate && r.instanceId !== null && r.collision !== 'none';
+
 /** Starts a relay INTO an already-open panel from a clean slot. */
 function relayInto(state: DetailState, r: OpenRequest): DetailState {
   const active: ActiveObject = { entityId: r.entityId, instanceId: r.instanceId };
-  const flies = r.animate && r.instanceId !== null;
+  const flies = relayFlies(r);
+  // 'none' keeps `relaying` null: the outgoing object is simply on the plane
+  // again from this commit — there is no second visual, and no landing to await.
   const outgoing: RelayObject | null =
-    state.active && state.active.instanceId !== null
+    r.collision !== 'none' && state.active && state.active.instanceId !== null
       ? { entityId: state.active.entityId, instanceId: state.active.instanceId }
       : null;
   if (!flies) return S('open', active, 'shown', outgoing);
@@ -150,8 +164,9 @@ function relayInto(state: DetailState, r: OpenRequest): DetailState {
 
 /** Begins a request into an already-open panel with NO relay (the slot is empty). */
 function beginInOpen(r: OpenRequest): DetailState {
-  const flies = r.animate && r.instanceId !== null;
-  return S('open', { entityId: r.entityId, instanceId: r.instanceId }, flies ? 'in' : 'shown');
+  // Still `relayFlies`: the panel is open, so this is a swap of content inside
+  // it — a 'none' request queued while a serialize relay finished lands settled.
+  return S('open', { entityId: r.entityId, instanceId: r.instanceId }, relayFlies(r) ? 'in' : 'shown');
 }
 
 /** Fires a parked request once the slot is clean: relay gone AND the active object settled. */

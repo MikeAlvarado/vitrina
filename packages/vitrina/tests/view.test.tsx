@@ -82,6 +82,143 @@ describe('grid view', () => {
   });
 });
 
+describe("the grid's composition holes", () => {
+  /*
+   * The grid is the accessible alternative to the plane — and the default view
+   * under `reducedMotion: 'grid'`, so for a visitor who cannot take the plane it
+   * is the whole catalogue. A grid of unnamed objects tells that visitor
+   * nothing, hence two holes of the library's own.
+   *
+   * What must hold structurally: the caption is a SIBLING of the object's
+   * button, never inside it. The button measures the fixed cell and is the
+   * element that Flips to and from the plane — a caption inside it would sit on
+   * the object and travel with it.
+   */
+  it('renderCard mounts inside every card, beside the object button and outside the flying element', async () => {
+    stubs.prefersReduced = true;
+    // Keyed by entity, not appended: StrictMode renders twice and the question
+    // here is what each card was handed, not how many passes React made.
+    const seen = new Map<string, VitrinaObjectContext>();
+    const { host, root } = await mountStrict({
+      props: {
+        defaultView: 'grid',
+        renderCard: (entity, ctx) => {
+          seen.set(entity.id, ctx);
+          return <p data-test-card="">{`name:${entity.id}`}</p>;
+        },
+      },
+    });
+
+    const items = Array.from(host.querySelectorAll<HTMLElement>('[data-vitrina-grid-item]'));
+    expect(items).toHaveLength(entities.length);
+    // One card's content per entity, in entity order, each inside its own item.
+    const contents = Array.from(host.querySelectorAll<HTMLElement>('[data-vitrina-card-content]'));
+    expect(contents).toHaveLength(entities.length);
+    expect(contents.map((el) => el.textContent)).toEqual(entities.map((e) => `name:${e.id}`));
+
+    for (const [i, item] of items.entries()) {
+      const entity = entities[i]!;
+      const button = item.querySelector<HTMLButtonElement>('[data-vitrina-card]');
+      const content = item.querySelector<HTMLElement>('[data-vitrina-card-content]');
+      expect(button?.getAttribute('data-vitrina-entity')).toBe(entity.id);
+      // Sibling of the button, not a descendant: the Flip element carries only
+      // the object, so the caption cannot travel into the plane with it.
+      expect(content?.parentElement).toBe(item);
+      expect(button?.contains(content ?? null)).toBe(false);
+      expect(button?.textContent).toBe(entity.id); // renderObject's output alone
+      // The button is still the flight's element, and still the only control.
+      expect(button?.getAttribute('data-flip-id')).toBe(`${entity.id}-1`);
+      expect(item.querySelectorAll('button')).toHaveLength(1);
+    }
+
+    // The ctx is the object's, once per ENTITY — the grid lists what exists.
+    expect([...seen.keys()]).toEqual(entities.map((e) => e.id));
+    expect([...seen.values()].map((ctx) => ctx.instanceId)).toEqual(entities.map((e) => `${e.id}-1`));
+    expect(
+      [...seen.values()].every((ctx) => ctx.view === 'grid' && ctx.isRevealed && !ctx.isActive),
+    ).toBe(true);
+
+    await act(async () => root.unmount());
+  });
+
+  it('renderCard sees isActive while the panel is about its entity', async () => {
+    stubs.prefersReduced = true;
+    const active = new Set<string>();
+    const { root } = await mountStrict({
+      props: {
+        defaultView: 'grid',
+        renderCard: (entity, ctx) => {
+          if (ctx.isActive) active.add(entity.id);
+          return null;
+        },
+      },
+      children: <Probe />,
+    });
+    active.clear();
+    act(() => currentApi().openDetail('e3'));
+    expect([...active]).toEqual(['e3']);
+
+    active.clear();
+    act(() => currentApi().closeDetail());
+    expect([...active]).toEqual([]);
+
+    await act(async () => root.unmount());
+  });
+
+  it('renderGridHeader mounts INSIDE the scroll container, above the cards — where children cannot', async () => {
+    stubs.prefersReduced = true;
+    const { host, root } = await mountStrict({
+      props: {
+        defaultView: 'grid',
+        renderGridHeader: () => <h2 data-test-header="">24 objects</h2>,
+      },
+      children: <p data-test-child="">chrome</p>,
+    });
+
+    const region = grid(host);
+    const header = host.querySelector<HTMLElement>('[data-vitrina-grid-header]');
+    expect(header?.parentElement).toBe(region);
+    expect(header?.textContent).toBe('24 objects');
+    // First child of the container, before every card: it scrolls WITH them.
+    expect(region?.firstElementChild).toBe(header);
+    const firstItem = host.querySelector('[data-vitrina-grid-item]');
+    expect(header).not.toBeNull();
+    expect(firstItem).not.toBeNull();
+    // …and every card comes after it in document order.
+    const order = header!.compareDocumentPosition(firstItem!);
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // The contrast that justifies the hole: `children` is a sibling of the view,
+    // outside the box that scrolls.
+    const child = host.querySelector('[data-test-child]');
+    expect(region?.contains(child)).toBe(false);
+
+    await act(async () => root.unmount());
+  });
+
+  it('both holes are grid-only, and with neither the grid renders exactly what it always did', async () => {
+    stubs.prefersReduced = true;
+    const renderCard = vi.fn(() => <span>caption</span>);
+    const renderGridHeader = vi.fn(() => <h2>heading</h2>);
+    const { host, root } = await mountStrict({
+      props: { defaultView: 'plane', renderCard, renderGridHeader },
+      children: <Probe />,
+    });
+    expect(renderCard).not.toHaveBeenCalled();
+    expect(renderGridHeader).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-vitrina-card-content]')).toBeNull();
+
+    // …and with the holes empty, the grid adds no node and no text of its own.
+    act(() => rerender(root, { props: { defaultView: 'plane', view: 'grid' }, children: <Probe /> }));
+    const region = grid(host);
+    expect(region?.querySelector('[data-vitrina-grid-header]')).toBeNull();
+    expect(region?.querySelector('[data-vitrina-card-content]')).toBeNull();
+    expect(region?.textContent).toBe(entities.map((e) => e.id).join(''));
+
+    await act(async () => root.unmount());
+  });
+});
+
 describe('the toggle', () => {
   it('uncontrolled: defaultView, setView and toggleView drive the view; onViewChange reports each change', async () => {
     stubs.prefersReduced = true;

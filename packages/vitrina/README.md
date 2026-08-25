@@ -133,6 +133,8 @@ detail panel keys off the entity, so every copy opens the same thing.
 | `entities`         | `VitrinaEntity[]`                                | required            | What exists: `{ id, size?, data? }`. `size` is the reference diameter at zoom 1; `data` is yours, handed back verbatim. Duplicate ids throw.     |
 | `renderObject`     | `(entity, ctx) => ReactNode`                     | required            | The object itself, called once per instance. `ctx`: `{ instanceId, isActive, isRevealed, view }`. Must be pure and cheap.                        |
 | `labels`           | `VitrinaLabels`                                  | required            | Every user-visible string (see below). Rendered as aria-labels; the one visible use is `<VitrinaControls>`' button text.                         |
+| `renderCard`       | `(entity, ctx) => ReactNode`                     | —                   | The grid card's content, under the object. Grid view only, once per entity. See “The grid is a catalogue”.                                        |
+| `renderGridHeader` | `() => ReactNode`                                | —                   | A full-row header **inside** the grid's scroll container. Grid view only — `children` mounts outside it and would stay pinned.                    |
 | `renderAbove`      | `(entity, ctx) => ReactNode`                     | —                   | First hole of the panel column, above the object. See “The detail panel is composable”.                                                          |
 | `renderBeside`     | `(entity, ctx) => ReactNode`                     | —                   | Sits in the object's row, beside the landing slot. `besidePlacement` picks which side.                                                           |
 | `renderDetail`     | `(entity, ctx) => ReactNode`                     | —                   | The main content hole, below the object. The library owns the shell, the order and the flight, and renders nothing else inside.                  |
@@ -142,12 +144,12 @@ detail panel keys off the entity, so every copy opens the same thing.
 | `besidePlacement`  | `'start' \| 'end'`                               | `'start'`           | Whether `renderBeside` comes before or after the object in the row.                                                                              |
 | `dismissOn`        | `('escape' \| 'outside' \| 'planeDrag')[]`       | `['escape']`        | What closes an open panel. An explicit array — see “Dismissal”.                                                                                  |
 | `modal`            | `boolean`                                        | `false`             | Traps focus in the panel (`aria-modal`). Tie it to the breakpoint where `--vitrina-panel-size` reaches 100% — see “modal”.                       |
-| `instances`        | `VitrinaInstance[]`                              | generated           | Provide to skip generation entirely (e.g. precomputed with `generateInstances`).                                                                 |
+| `instances`        | `VitrinaInstance[]`                              | generated           | Provide to skip generation entirely (e.g. precomputed with `generateInstances`). Explicit positions also **turn `compactWorld` off** — see below. |
 | `layout`           | `VitrinaLayout`                                  | measured defaults   | World size, instance count, columns, base size, jitter, separation, `seed`, compact breakpoint. Omitted fields fall back to the defaults.        |
 | `activeId`         | `string \| null`                                 | —                   | Controlled active entity. Omit for uncontrolled.                                                                                                 |
 | `defaultActiveId`  | `string \| null`                                 | `null`              | Initial active entity (uncontrolled). Mounts the panel open, settled, no flight — and steals no focus.                                           |
 | `onActiveChange`   | `(id: string \| null) => void`                   | —                   | Fires on open/close/switch, controlled or not.                                                                                                   |
-| `openCollision`    | `'serialize' \| 'crossfade'`                     | `'serialize'`       | Opening B with A open: `serialize` flies A home first, then B in; `crossfade` runs both at once on two layers.                                   |
+| `openCollision`    | `'serialize' \| 'crossfade' \| 'none'`            | `'serialize'`       | Opening B with A open: `serialize` flies A home first, then B in; `crossfade` runs both at once on two layers; `none` swaps in one commit, no flight. The first open always flies. |
 | `view`             | `'plane' \| 'grid'`                              | —                   | Controlled view. Omit for uncontrolled.                                                                                                          |
 | `defaultView`      | `'plane' \| 'grid'`                              | `'plane'`           | Initial view (uncontrolled).                                                                                                                     |
 | `onViewChange`     | `(view) => void`                                 | —                   | Fires on every toggle.                                                                                                                           |
@@ -167,6 +169,27 @@ transitions, view, `openDetail`/`closeDetail`, `detailPhase`, `viewLocked`, the
 `labels` passed through), `<VitrinaControls>` (below), `generateInstances(entities,
 resolveLayout(layout))` and `resolveLayout`/`DEFAULT_LAYOUT` — generation is a feature,
 not an internal: precompute instances at build time and pass them via `instances`.
+
+### Placing the instances yourself
+
+`instances` skips generation entirely — and with it `layout.compactWorld`. Instance
+coordinates are absolute world pixels, and the pan is clamped so the world always
+covers the viewport: swapping in a narrower world below `compactBreakpoint` would put
+every instance past the compact width **outside the pan bounds**, permanently
+unreachable on exactly the devices with the least room to spare. So when you hand the
+library positions, the positions win: `layout.world` is the world at every viewport
+width, and `compactWorld`/`compactSizeFactor` are ignored.
+
+Two consequences worth planning for:
+
+- **Size your world for the smallest viewport you support.** A 4645×3044 world on a
+  390px phone is a lot of panning; if you want a denser plane there, generate (the
+  generator re-places into whichever world is in use) or swap the list yourself at your
+  own breakpoint.
+- **In development, anything outside the world is reported.** Any instance whose box
+  falls outside `layout.world` gets a `console.warn` naming it, whatever the cause —
+  because an object out there can never be panned to, and the plane looks perfectly
+  fine while missing it.
 
 ## Styles and themes
 
@@ -256,7 +279,7 @@ class names to collide with and nothing to configure in `tailwind.config`.
 
 The ease tokens hold **GSAP ease strings**, not CSS timing functions — they drive
 tweens. The panel wipe's own curves stay CSS (`--vitrina-panel-ease-in`/`-out`). Layout
-knobs (`--vitrina-grid-cell`, `--vitrina-grid-gap`, `--vitrina-detail-object`,
+knobs (`--vitrina-grid-cell`, `--vitrina-grid-gap`, `--vitrina-card-gap`, `--vitrina-detail-object`,
 `--vitrina-panel-size`, `--vitrina-panel-fixed-inset`, `--vitrina-object-font-size`)
 are ordinary custom properties a theme — or your own stylesheet — may retune under
 media queries.
@@ -295,6 +318,64 @@ behind the buttons and an open detail panel covers them where it overlaps — po
 but don't give it a `z-index` of your own. The container takes no pointer events (only
 the buttons do), so a drag starting in the gap between buttons still pans the plane.
 
+## The grid is a catalogue
+
+The grid view is the plane's list with another layout — one card per **entity**, not
+per copy — and it is the accessible alternative to the plane: every card is in the tab
+order, revealed or not, and under `reducedMotion: 'grid'` it is the ONLY view a visitor
+who prefers reduced motion ever sees. A grid of unnamed objects tells that visitor
+nothing, so it has two holes of its own.
+
+```tsx
+<Vitrina
+  entities={minerals}
+  labels={labels}
+  renderObject={(e) => <img src={(e.data as Mineral).src} alt="" draggable={false} />}
+  renderCard={(e) => (
+    <>
+      <p className="card-name">{(e.data as Mineral).name}</p>
+      <p className="card-sub">{(e.data as Mineral).locality}</p>
+    </>
+  )}
+  renderGridHeader={() => <h2>Mineral specimens</h2>}
+/>
+```
+
+The DOM of one cell:
+
+```html
+<div data-vitrina-grid>
+  <div data-vitrina-grid-header>…renderGridHeader()…</div>
+  <div data-vitrina-grid-item>
+    <button data-vitrina-object data-vitrina-card>   <!-- the object, and the only control -->
+      <span data-vitrina-object-content>…renderObject(entity, ctx)…</span>
+    </button>
+    <div data-vitrina-card-content>…renderCard(entity, ctx)…</div>
+  </div>
+  …
+</div>
+```
+
+Three things follow from that shape, and each of them is the reason for it:
+
+- **`renderCard` is not a `ctx.view` branch of `renderObject`.** The button is the
+  element that Flips to and from the plane, and it measures exactly
+  `--vitrina-grid-cell`. Anything rendered inside it sits ON the object and travels
+  with it into the plane. What `renderCard` returns is a **sibling** of that button.
+- **The card's only control is the object button**, named by `labels.objectLabel`.
+  `renderCard`'s content is not a hit target; it cannot be nested inside a button, so
+  if you want a link in a card, put it there and it will be a control of its own,
+  beside the object's.
+- **`renderGridHeader` mounts inside the scrolling container**, spanning every column,
+  so it scrolls away with the cards. `children` is a sibling of the whole view — a
+  heading placed there stays pinned over a catalogue moving underneath it.
+
+`renderCard` receives the same `ctx` as `renderObject` (`{ instanceId, isActive,
+isRevealed, view }`, with `view: 'grid'`); the instance is the copy the card stands for
+and flies from. Both holes are optional and grid-only: without them the grid renders
+exactly what it always did, and neither function is ever called in plane view. The gap
+between an object and its card content is `--vitrina-card-gap` (12px).
+
 ## The detail panel is composable
 
 The library decides the order and where the object lands; you fill the holes. The
@@ -313,7 +394,8 @@ Every hole is optional and receives the same `ctx`:
 
 - `close()` — close the panel.
 - `step(delta)` — relay to the entity `delta` places away in `entities` order, circular
-  (`step(1)` / `step(-1)` are next/previous).
+  (`step(1)` / `step(-1)` are next/previous). What the relay looks like is
+  `openCollision`'s (below).
 - `activeId` — the entity the panel is rendering for.
 - `view` — `'plane' | 'grid'`.
 - `objectSettled` — `true` only once the flight has landed and the panel's copy is the
@@ -323,6 +405,23 @@ Every hole is optional and receives the same `ctx`:
 Your nodes are **direct flex children** of the column: no wrapper boxes to fight, your
 own flex/margin tricks work as written. The object slot carries `min-width: 0`, so it
 shrinks alongside a wide `renderBeside` in a narrow panel instead of collapsing.
+
+### Switching objects with the panel open (`openCollision`)
+
+The panel never moves for a switch: it is uncovered once and covered once, and clicking
+another object — or calling `ctx.step(1)` — changes what is inside it, not the container.
+`openCollision` decides only how the OBJECT changes over, and it says nothing about the
+first open, which always flies:
+
+- **`'serialize'`** (default) — the object in the panel flies home first, then the new
+  one flies in from its copy on the plane. One object in flight at a time.
+- **`'crossfade'`** — both fly at once, opposite directions, on two layers. Faster; the
+  two are always different entities, so no frame shows two copies of one object.
+- **`'none'`** — no flight at all: the outgoing object is back on the plane and the
+  incoming one is in the slot in the same commit. Pick it when the two objects are
+  typically far apart — a `step(1)` between neighbours in your list can be a trip across
+  the whole world, and watching an object cross a plane nobody is looking at is slower
+  than the swap it illustrates.
 
 ### Side and size
 
@@ -488,7 +587,10 @@ The `reducedMotion` prop arbitrates what the OS preference means:
 - `'respect'` (default): no intro, no pops, no inertia, no staggers — objects simply
   appear; drag, wheel, zoom and the panel keep working.
 - `'grid'`: additionally lock the view to the grid — no toggle, no zoom.
-  `api.viewLocked` tells chrome to hide both (`<VitrinaControls>` already does).
+  `api.viewLocked` tells chrome to hide both (`<VitrinaControls>` already does). This is
+  the mode that makes `renderCard` matter: the grid becomes the only view that visitor
+  ever sees, and it should read as a catalogue, not as a wall of anonymous objects.
+  See “The grid is a catalogue”.
 - `'ignore'`: animate regardless; that accessibility decision is yours.
 
 Tab order is identical in all three modes — focus is not decoration. The stylesheet

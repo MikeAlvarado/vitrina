@@ -130,15 +130,61 @@ export const centreInside = (r: PlacedRect, window: Rect): boolean => {
   return cx >= window.left && cx <= window.right && cy >= window.top && cy <= window.bottom;
 };
 
+export interface WorldChoice {
+  world: Size;
+  /** Scales object size and the generator's grid step together. 1 off compact. */
+  sizeFactor: number;
+  /** The compact world is the one in use — the generator must place into it. */
+  compact: boolean;
+}
+
 /**
  * World sizing (§2.2): compact world below the breakpoint, regular world at or
- * above it. `sizeFactor` scales object size and grid step together on compact.
+ * above it — UNLESS the consumer supplied the instances.
+ *
+ * `explicitInstances` is not a convenience flag, it is the whole decision.
+ * Instance coordinates are absolute world px, and pan is clamped so the world
+ * always covers the viewport: swapping in a narrower world under coordinates
+ * computed for the wide one puts every instance beyond the compact width
+ * outside the pan bounds — permanently unreachable, on exactly the devices with
+ * the least room to spare. So explicit instances dictate the world at every
+ * width, and `compactWorld`/`compactSizeFactor` are ignored: if you hand the
+ * library positions, the positions win. (Generated instances keep the compact
+ * behaviour: they are re-generated INTO whichever world is in use, so nothing
+ * can fall out of it.)
  */
 export function selectWorld(
   layout: Required<VitrinaLayout>,
   viewportW: number,
-): { world: Size; sizeFactor: number } {
-  return viewportW < layout.compactBreakpoint
-    ? { world: layout.compactWorld, sizeFactor: layout.compactSizeFactor }
-    : { world: layout.world, sizeFactor: 1 };
+  explicitInstances = false,
+): WorldChoice {
+  const compact = !explicitInstances && viewportW < layout.compactBreakpoint;
+  return compact
+    ? { world: layout.compactWorld, sizeFactor: layout.compactSizeFactor, compact }
+    : { world: layout.world, sizeFactor: 1, compact };
+}
+
+/**
+ * The instances whose box is not entirely inside the world — the dev warning's
+ * question, and exactly the reachability one.
+ *
+ * Why the world box is the right test: pan is clamped so the world covers the
+ * viewport, so the visible window sweeps the whole of [0, world] as the pan
+ * travels its bounds (and covers MORE than that when the scaled world is too
+ * small to fill an axis, where the world sits centred). An instance inside the
+ * world box can therefore always be brought into view; one outside it may never
+ * be — no gesture reaches it, at any zoom.
+ *
+ * Ids come back in input order, so a warning names the first offenders in the
+ * order the consumer listed them.
+ */
+export function outOfWorld(
+  instances: readonly { id: string; x: number; y: number; size: number }[],
+  world: Size,
+): string[] {
+  const out: string[] = [];
+  for (const i of instances) {
+    if (i.x < 0 || i.y < 0 || i.x + i.size > world.w || i.y + i.size > world.h) out.push(i.id);
+  }
+  return out;
 }

@@ -90,6 +90,10 @@
    */
   --vitrina-grid-cell: 240px;
   --vitrina-grid-gap: 80px;
+  /* Between a card's object and the content `renderCard` puts under it. Its own
+     token, not the grid gap: the distance from an object to ITS caption is not
+     the distance between two cards, and a theme retunes them apart. */
+  --vitrina-card-gap: 12px;
   --vitrina-detail-object: 240px;
   /*
    * How much the panel covers — applied to the axis `panelSide` dictates
@@ -276,9 +280,45 @@
   z-index: var(--vitrina-z-plane);
 }
 
+/*
+ * The header hole: inside the scroll container (so it scrolls WITH the cards —
+ * that is the whole reason it is not `children`), spanning every auto-filled
+ * column. min-width: 0 so a wide child cannot stretch the track and push the
+ * cards out of their columns.
+ */
+[data-vitrina-grid-header] {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+/*
+ * One card = one grid cell: the object's BUTTON, then whatever `renderCard`
+ * returns beneath it. A column, because the button's box is fixed (the cell
+ * token — it is the element that Flips, and a flying box may not depend on the
+ * text next to it) while the content below takes whatever height it needs; the
+ * row grows, the object does not. With no `renderCard` the item holds the
+ * button alone and measures exactly what it always did.
+ */
+[data-vitrina-grid-item] {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--vitrina-card-gap);
+  min-width: 0;
+}
+
 [data-vitrina-card] {
   width: var(--vitrina-grid-cell);
   height: var(--vitrina-grid-cell);
+  /* The button is a flex item now: it must not be squeezed by a tall caption
+     (flex-shrink would change the box the Flip measured). */
+  flex: none;
+}
+
+/* `renderCard`'s box. No type, no colour, no spacing of its own beyond the gap
+   above: the content is the consumer's. min-width: 0 lets long words wrap
+   inside the cell instead of widening it. */
+[data-vitrina-card-content] {
+  min-width: 0;
 }
 
 /* --- The detail panel ------------------------------------------------------ */

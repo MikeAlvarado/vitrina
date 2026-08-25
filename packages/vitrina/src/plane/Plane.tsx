@@ -60,6 +60,7 @@ import {
   WHEEL_SPEED,
   ZOOM_TWEEN_EASE,
 } from '../defaults';
+import { isProduction } from '../env';
 import { generateInstances } from '../layout/generate';
 import { createRng } from '../layout/rng';
 import {
@@ -70,7 +71,7 @@ import {
 } from '../gsap';
 import type { GetMotion } from '../motion';
 import type { Session } from '../session';
-import { centerPan, clampPan, panBounds, selectWorld } from './geometry';
+import { centerPan, clampPan, outOfWorld, panBounds, selectWorld } from './geometry';
 import type { Size } from './geometry';
 import { framePass, staggerDelays } from './reveal';
 
@@ -80,6 +81,8 @@ interface PlaneGeometry {
   viewH: number;
   worldW: number;
   worldH: number;
+  /** The compact world is in use: generation must place into it. Always false
+      when the consumer supplied the instances — see `selectWorld`. */
   compact: boolean;
 }
 
@@ -208,6 +211,8 @@ export function Plane({
   const [, bumpRevealed] = useReducer((n: number) => n + 1, 0);
 
   const [geometry, setGeometry] = useState<PlaneGeometry | null>(null);
+  /** The consumer placed the objects: the compact world is off (see `selectWorld`). */
+  const explicitInstances = instances !== undefined;
 
   /*
    * View hand-off, capture side. Declared FIRST so its cleanup runs before any
@@ -256,13 +261,16 @@ export function Plane({
     const measure = () => {
       const { width, height } = viewport.getBoundingClientRect();
       if (width === 0 || height === 0) return;
-      const { world } = selectWorld(layout, width);
+      // ONE decision, `selectWorld`'s: which world, and whether it is the compact
+      // one (which the generation below has to place into). Explicit instances
+      // opt out of compact entirely — their coordinates are the world.
+      const { world, compact } = selectWorld(layout, width, explicitInstances);
       const next: PlaneGeometry = {
         viewW: width,
         viewH: height,
         worldW: world.w,
         worldH: world.h,
-        compact: width < layout.compactBreakpoint,
+        compact,
       };
       const current = geometryRef.current;
       if (
@@ -270,7 +278,10 @@ export function Plane({
         current.viewW === next.viewW &&
         current.viewH === next.viewH &&
         current.worldW === next.worldW &&
-        current.worldH === next.worldH
+        current.worldH === next.worldH &&
+        // Compared too: a theme whose compactWorld equals its world still
+        // changes the object SIZES across the breakpoint.
+        current.compact === next.compact
       ) {
         return;
       }
@@ -282,12 +293,14 @@ export function Plane({
     const observer = new ResizeObserver(measure);
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [layout]);
+  }, [layout, explicitInstances]);
 
   /*
    * Until the first measurement this generates for the regular world — the same
    * plane the server rendered, so hydration matches. A compact viewport
    * regenerates right after, in the re-render the measurement triggers.
+   * `compact` is `selectWorld`'s answer, so it is false whenever the consumer
+   * supplied the instances and this memo returns them untouched.
    */
   const compact = geometry?.compact ?? false;
   const placed = useMemo(() => {
@@ -306,6 +319,43 @@ export function Plane({
       baseSize: layout.baseSize * factor,
     });
   }, [instances, entities, layout, compact]);
+
+  // Before the first measurement (and on the server) the pan layer takes the
+  // regular world's dimensions — the compact decision needs a viewport width.
+  const world: Size = geometry ? { w: geometry.worldW, h: geometry.worldH } : layout.world;
+
+  /*
+   * Development-only: an instance whose box falls outside the world in use can
+   * never be brought into view. Pan is clamped to keep the world covering the
+   * viewport, so the visible window never leaves the world box — there is no
+   * gesture, at any zoom, that reaches an object outside it, and the failure is
+   * silent: the plane looks fine, it is simply missing objects.
+   *
+   * It fires whatever the cause, but the cause is almost always one thing: a
+   * hand-built `instances` list computed against a bigger world than
+   * `layout.world`. (`compactWorld` is no longer able to cause it — explicit
+   * instances opt out of it, see `selectWorld` — and generated instances are
+   * clamped into whichever world they are generated for.)
+   */
+  const warnedWorldRef = useRef('');
+  useIsomorphicLayoutEffect(() => {
+    if (isProduction()) return;
+    const stranded = outOfWorld(placed, world);
+    if (stranded.length === 0) return;
+    // Keyed on the OFFENDERS, not on the run: StrictMode's double mount (and
+    // any re-render that changes neither) says it once; a new set says it again.
+    const key = `${world.w}x${world.h}:${stranded.join(',')}`;
+    if (warnedWorldRef.current === key) return;
+    warnedWorldRef.current = key;
+    const sample = stranded.slice(0, 5).join(', ');
+    console.warn(
+      `[vitrina] ${stranded.length} of ${placed.length} instances fall outside the ` +
+        `${world.w}×${world.h} world in use and can never be panned to: ${sample}` +
+        `${stranded.length > 5 ? `, +${stranded.length - 5} more` : ''}. ` +
+        'Instance coordinates are absolute world px — grow `layout.world` to hold ' +
+        'them, or place them inside it.',
+    );
+  }, [placed, world.w, world.h]);
 
   const entityById = useMemo(() => new Map(entities.map((e) => [e.id, e])), [entities]);
 
@@ -833,9 +883,6 @@ export function Plane({
     [measured],
   );
 
-  // Before the first measurement (and on the server) the pan layer takes the
-  // regular world's dimensions — the compact decision needs a viewport width.
-  const world: Size = geometry ? { w: geometry.worldW, h: geometry.worldH } : layout.world;
   const { shown } = session.read();
 
   return (

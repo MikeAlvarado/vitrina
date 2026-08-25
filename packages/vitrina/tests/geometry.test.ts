@@ -16,6 +16,7 @@ import {
   centreInside,
   clampPan,
   instanceVisible,
+  outOfWorld,
   panBounds,
   screenToWorld,
   selectWorld,
@@ -249,6 +250,7 @@ describe('selectWorld', () => {
     expect(selectWorld(DEFAULT_LAYOUT, 639)).toEqual({
       world: DEFAULT_LAYOUT.compactWorld,
       sizeFactor: DEFAULT_LAYOUT.compactSizeFactor,
+      compact: true,
     });
   });
 
@@ -257,7 +259,43 @@ describe('selectWorld', () => {
       expect(selectWorld(DEFAULT_LAYOUT, w)).toEqual({
         world: DEFAULT_LAYOUT.world,
         sizeFactor: 1,
+        compact: false,
       });
     }
+  });
+
+  it('EXPLICIT instances take the regular world at every width — compactWorld is ignored', () => {
+    for (const w of [0, 1, 320, 639, 640, 1920]) {
+      expect(selectWorld(DEFAULT_LAYOUT, w, true)).toEqual({
+        world: DEFAULT_LAYOUT.world,
+        sizeFactor: 1,
+        compact: false,
+      });
+    }
+  });
+});
+
+describe('outOfWorld', () => {
+  const WORLD_S = { w: 1000, h: 800 };
+  const at = (id: string, x: number, y: number, size = 100) => ({ id, x, y, size });
+
+  it('a box fully inside is in; touching either edge exactly is still in', () => {
+    expect(outOfWorld([at('a', 0, 0), at('b', 900, 700), at('c', 450, 350)], WORLD_S)).toEqual([]);
+  });
+
+  it('reports every kind of overshoot, in input order', () => {
+    const list = [
+      at('right', 901, 0), //  x + size past the world's width
+      at('inside', 10, 10),
+      at('bottom', 0, 701),
+      at('negative', -1, 0),
+      at('above', 0, -0.5),
+    ];
+    expect(outOfWorld(list, WORLD_S)).toEqual(['right', 'bottom', 'negative', 'above']);
+  });
+
+  it('is empty for an empty list and for a zero world with zero-sized instances', () => {
+    expect(outOfWorld([], WORLD_S)).toEqual([]);
+    expect(outOfWorld([at('z', 0, 0, 0)], { w: 0, h: 0 })).toEqual([]);
   });
 });

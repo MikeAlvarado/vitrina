@@ -175,6 +175,40 @@ describe('base.css is structural and theme-blind', () => {
   });
 });
 
+describe('the composable grid card', () => {
+  it('the item is a column: the object box fixed, the card content free to grow', () => {
+    // The cell holds two things stacked — the button (the object's box) and
+    // whatever renderCard returns. A column, not a grid: the row grows with the
+    // caption while the object keeps the exact cell it flies with.
+    expect(cssDecl('[data-vitrina-grid-item]', 'display')).toBe('flex');
+    expect(cssDecl('[data-vitrina-grid-item]', 'flex-direction')).toBe('column');
+    expect(cssDecl('[data-vitrina-grid-item]', 'row-gap')).toBe('var(--vitrina-card-gap)');
+    // Long words wrap inside the cell instead of widening the track.
+    expect(cssDecl('[data-vitrina-grid-item]', 'min-width')).toBe('0');
+    expect(cssDecl('[data-vitrina-card-content]', 'min-width')).toBe('0');
+  });
+
+  it('the card button keeps the exact cell — a caption can never squeeze the box that Flips', () => {
+    expect(cssDecl('[data-vitrina-card]', 'width')).toBe('var(--vitrina-grid-cell)');
+    expect(cssDecl('[data-vitrina-card]', 'height')).toBe('var(--vitrina-grid-cell)');
+    // flex: none — as a flex item it would otherwise shrink under a tall
+    // caption, and the Flip would measure a box the plane never had.
+    expect(cssDecl('[data-vitrina-card]', 'flex')).toBe('none');
+  });
+
+  it('the header spans the full row inside the scroll container', () => {
+    expect(cssDecl('[data-vitrina-grid-header]', 'grid-column')).toBe('1 / -1');
+    expect(cssDecl('[data-vitrina-grid-header]', 'min-width')).toBe('0');
+    // It is a child of the scrolling grid, which is what makes it scroll with
+    // the cards: no positioning of its own that could lift it out of the flow.
+    expect(cssDecl('[data-vitrina-grid-header]', 'position')).toBeNull();
+  });
+
+  it('the card gap is a token a theme can retune under a media query', () => {
+    expect(cssDecl('[data-vitrina-root]', '--vitrina-card-gap')).not.toBeNull();
+  });
+});
+
 describe('the composable panel', () => {
   const SIDES = ['left', 'right', 'top', 'bottom'] as const;
   const panelAt = (side: string) => `[data-vitrina-panel][data-vitrina-panel-side='${side}']`;

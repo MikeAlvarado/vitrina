@@ -524,6 +524,48 @@ describe('the panel stays put while the object changes (the decoupling)', () => 
 
     await act(async () => root.unmount());
   });
+
+  it("none: the swap is one commit — no flight, no relay, no wipe, and the panel never moves", async () => {
+    const { host, root } = await mountRevealed({ props: { openCollision: 'none' } });
+    const [a, b, c] = origins(host);
+
+    // The FIRST open still flies: 'none' is about swaps inside an open panel.
+    act(() => a.click());
+    expect(detailOf(host).panelAnim).toBe('reveal');
+    landUntilSettled(host);
+    expect(panelEntity(host)).toBe('e0');
+
+    // Open B: the panel's content is B, B's slot copy is the visible one, and A
+    // is ALREADY back on the plane. Nothing is in flight, on either layer.
+    act(() => b.click());
+    expect(panelEntity(host)).toBe('e1');
+    expect(detailOf(host).panelPhase).toBe('open');
+    expect(detailOf(host).panelAnim).toBe('none'); // no re-wipe on the swap
+    expect(hidden(a)).toBe(false); // A: on the plane, this very commit
+    expect(hidden(b)).toBe(true); //  B: its copy is the panel's
+    expect(hidden(detailOf(host).slot)).toBe(false);
+    expect(hidden(detailOf(host).flight)).toBe(true);
+    expect(hidden(detailOf(host).relay)).toBe(true);
+    expect(tweensOn(detailOf(host).flight as Element)).toHaveLength(0);
+    expect(tweensOn(detailOf(host).relay as Element)).toHaveLength(0);
+    expect(hiddenObjectsOf(host).map(entityOf)).toEqual(['e1']);
+    noDuplicateCopies(host);
+
+    // A third object, immediately: same again, no queue to drain.
+    act(() => c.click());
+    expect(panelEntity(host)).toBe('e2');
+    expect(hiddenObjectsOf(host).map(entityOf)).toEqual(['e2']);
+    noDuplicateCopies(host);
+
+    // The close is untouched — it still covers first, then flies home.
+    act(() => currentApi().closeDetail());
+    expect(detailOf(host).panelPhase).toBe('covering');
+    landUntilSettled(host);
+    expect(detailOf(host).layer).toBeNull();
+    expect(hiddenObjectsOf(host)).toHaveLength(0);
+
+    await act(async () => root.unmount());
+  });
 });
 
 describe('the API and the consumer', () => {
