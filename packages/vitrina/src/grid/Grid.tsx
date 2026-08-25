@@ -206,12 +206,17 @@ export function Grid({
           // React owns `visibility`; GSAP owns opacity/scale. Structure is base.css's.
           style={{ visibility: hiddenIds.has(representative(entity.id)) ? 'hidden' : undefined }}
         >
-          {renderObject(entity, {
-            instanceId: representative(entity.id),
-            isActive: entity.id === activeEntityId,
-            isRevealed: true,
-            view: 'grid',
-          })}
+          {/* Same two-node structure as the plane instance: the button is the
+              box, the content node centres renderObject's return (cards never
+              pop, but the content rules key on this node). */}
+          <span data-vitrina-object-content="">
+            {renderObject(entity, {
+              instanceId: representative(entity.id),
+              isActive: entity.id === activeEntityId,
+              isRevealed: true,
+              view: 'grid',
+            })}
+          </span>
         </button>
       ))}
     </div>

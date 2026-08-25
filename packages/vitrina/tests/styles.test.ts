@@ -75,7 +75,7 @@ describe('base.css is structural and theme-blind', () => {
 
   it('centres and caps the content of every object copy — renderObject gets a ready-sized box', () => {
     for (const selector of [
-      '[data-vitrina-object]',
+      '[data-vitrina-object-content]',
       '[data-vitrina-slot]',
       '[data-vitrina-flight]',
       '[data-vitrina-relay]',
@@ -98,6 +98,18 @@ describe('base.css is structural and theme-blind', () => {
     }
     // The default is relative to the box, not an absolute size.
     expect(cssDecl('[data-vitrina-root]', '--vitrina-object-font-size')).toMatch(/cqmin$/);
+  });
+
+  it('the object button never clips its content node — the pop ease overshoots past the box', () => {
+    // The content node fills the button; the pop animates IT, never the button.
+    expect(cssDecl('[data-vitrina-object-content]', 'width')).toBe('100%');
+    expect(cssDecl('[data-vitrina-object-content]', 'height')).toBe('100%');
+    // And the button declares nothing that could clip or contain the overshoot
+    // frame: no overflow, no contain, no container-type. The overshoot getting
+    // clipped to the content-box was a real bug.
+    const body = cssBodies('[data-vitrina-object]').join(';');
+    expect(body).not.toMatch(/overflow/);
+    expect(body).not.toMatch(/contain/);
   });
 
   it('paints no button surface — the object is a cut-out, the shadow follows the silhouette', () => {

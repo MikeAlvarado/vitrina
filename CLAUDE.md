@@ -62,9 +62,30 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
   attributes only on change, never every frame. This pass lives **outside** any
   `matchMedia` branch — focus behaves identically under reduced motion.
 - **Reveal:** unrevealed = `opacity: 0` **and** `pointer-events: none` (invisible but
-  clickable opens a panel from empty plane). Scale 0.6 → 1; gap between pops seeded
-  random 30–80 ms (a fixed step reads as a mechanical wave). Revealed is permanent,
-  survives the grid toggle.
+  clickable opens a panel from empty plane). Scale 0.6 → 1 on `back.out(1.4)`; gap
+  between pops seeded random 30–80 ms (a fixed step reads as a mechanical wave).
+  Revealed is permanent, survives the grid toggle. One `fromTo` per object,
+  `lazy: false` (a deferred initial state paints a frame un-hidden before the pop).
+  At rest the content node sits at identity, the button carries no transform ever
+  (pinned in `tests/reveal-dom.test.tsx`).
+  **TWO nodes per object.** The BUTTON holds the instance's exact box at constant
+  scale; its only child `[data-vitrina-object-content]` fills it, carries the pop's
+  opacity/scale, and centres `renderObject`'s return (the content rules and
+  `container-type: size` live THERE). Why: the themes hang
+  `--vitrina-object-shadow` on the BUTTON, and a filter on a node that changes
+  scale re-rasterizes across raster-scale thresholds — jumps of its own. The
+  button declares no overflow/contain/container-type (pinned in
+  `tests/styles.test.ts`), so the overshoot paints past the box un-clipped.
+  `pointer-events` stays on the button — the hit target; a child's `none` would
+  not stop its clicks. Grid cards share the two-node structure (they never pop;
+  the content rules key on the node).
+  **Verify reveal/scale animation with IMAGE content only — never emoji-as-text.**
+  On macOS, Chrome draws emoji from Apple Color Emoji, a BITMAP (sbix) font with
+  fixed-size strikes: under an animated scale the glyph snaps between strikes —
+  crisp size jumps mid-pop that read exactly like a broken animation while DOM,
+  tween frames and geometry all measure perfect. This cost ten rounds of pipeline
+  surgery on a bug the library never had. The playground's objects are generated
+  `<img>` shapes; emoji stays behind its `content` toggle for A/B only.
 - **The detail is TWO decoupled lifecycles.** The PANEL is the container for "there is
   something active": uncovered once, covered once, unmoved while the active object
   changes. The state machine governs the OBJECT, not the panel. Exactly one visible copy
@@ -147,15 +168,25 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
   the flight layer would arrive a frame after the click — the parked clone would have
   nowhere to render and the object would flash behind the panel. `Detail` receives it as
   a prop; the flight effect keys on it so the park re-runs the instant the portal exists.
-- **Landing is a React commit, not a `gsap.set` in `onComplete`.** `onComplete` only
-  dispatches; the commit that shows the slot (or un-hides the instance) is the one whose
-  effect cleanup reverts the flight context — no blank frame.
+- **Landing is a React commit, and the hand-off OVERLAPS in `onComplete`.** `onComplete`
+  FIRST shows the landing copy — slot `visible` flying in, instance un-hidden flying
+  out and on a relay; plain DOM writes of the exact values the next commit renders, so
+  React never disagrees — THEN dispatches. The commit that follows hides the flying
+  visual and its effect cleanup reverts the flight context; until it lands, both copies
+  sit exactly superimposed (invisible). Leaving the whole swap to the commit paints one
+  frame with NEITHER copy — a visible blink at every landing, because the commit runs a
+  frame after the tween's last render. And `autoRound: false` on the park set and the
+  flight set/tween: GSAP rounds a positioned element's left/top/width/height to whole
+  px, so the rounded box lands up to half a pixel off the slot's fractional rect — with
+  the overlap, a double image instead of a snap.
 - **FLIP by hand, not `Flip.fit`:** two `getBoundingClientRect`s, the box set ONCE to
   the destination's, one tween on x/y/scaleX/scaleY (no layout per frame). `Flip.fit`
   goes through `getGlobalMatrix` and does not run under jsdom, where the geometry is
   tested. Both the active flight and the relay use the same `flyVisual`.
 - **React owns `visibility`; GSAP owns opacity/scale/pointer-events.** Neither writes the
-  other's, so the reveal context's `revert()` and the hidden origin never collide.
+  other's, so the reveal context's `revert()` and the hidden origin never collide. The
+  ONE licensed exception is the landing overlap above: `onComplete` pre-writes exactly
+  the visibility value the very next commit renders.
 - **Focus returns in a layout effect of the commit the panel closes in** — the same
   commit un-hides the origin, and a `visibility: hidden` element takes no focus. Exact
   instance from the root's registry (never a selector by entity prefix), `preventScroll`
@@ -211,6 +242,15 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
     and a hydrate of a `defaultActiveId` tree logs zero mismatch warnings.
   - The portal wrapper is stamped `data-vitrina-root` so the stacking tokens and any
     theme custom properties (all scoped to `[data-vitrina-root]`) resolve on `body` too.
+    What the attribute does NOT carry is INHERITED text style: the wrapper lives on
+    `body`, outside the consumer's tree, so the flying copy would paint with body's
+    typography — same box, different font metrics (SVG text baselines and line boxes
+    both move with the font), and every hand-off jumps vertically by the constant
+    difference: up on lift-off, down on landing, both visuals at once in a crossfade.
+    The orchestrator reads the root's inheritable text properties ONCE at mount (same
+    discipline as the motion tokens) and replays them inline on the wrapper. `color` is
+    deliberately NOT copied: the themes set it on `[data-vitrina-root]` (which the
+    stamp resolves), and an inline copy would pin a hot theme switch to mount time.
 - The panel layer stays INSIDE the root; only the flight escapes. All layers are
   `pointer-events: none` except the panel (`auto`): a `pointer-events: none` layer does
   not hand the hit-test to what paints beneath. No overlay — darkening the other half
@@ -377,6 +417,9 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
   every reveal pop, silently. Anything that feeds the reveal context (the visibility pass)
   runs only outside any `gsap.context` setup: after construction, or from tween callbacks.
 - `gsap.from`/`fromTo` defer initial state to end of tick — `lazy: false` where it matters.
+  **`gsap.set` is lazy the same way**: a set created in a React commit WRITES at the end
+  of the next tick, AFTER that tick's tweens render — stomping their frame with the
+  set's values. `lazy: false` on any set that must land now (the reveal baseline).
 - **Anything created after an `await` inside an effect needs a cancellation flag.** The
   plugins arrive via dynamic `import()`; whenever the cleanup runs while that promise is
   pending (a resize or reduced-motion flip before the plugins land; StrictMode's double
@@ -522,6 +565,11 @@ re-emits a revealed id). `staggerDelays` starts at 0 with seeded gaps in [30, 80
   reveal rhythm, the flight, >1900 px viewports, real mobile, banding on pure black
   (if visible, lift `--vitrina-page` to `#08080A`), perf at full instance count. Say
   when something needs this check; do not pretend a test covered it.
+- **Real-browser animation checks need IMAGE content — emoji-as-text lies.** On macOS,
+  Chrome renders emoji from Apple Color Emoji (bitmap sbix strikes at fixed sizes);
+  any animated scale snaps the glyph between strikes, faking a broken animation that
+  no DOM, tween or geometry measurement will ever show. The playground defaults to
+  generated `<img>` shapes; its `content: emoji` toggle exists for A/B only.
 
 ## Licensing
 
@@ -542,7 +590,9 @@ packages/vitrina test|typecheck|build`.
 - [ ] 3. `<Vitrina>` + `<Plane>`: layers, drag, wheel, zoom, bounds — code complete,
      gate green, SSR smoke passed; browser check on `pnpm preview` still pending
 - [ ] 4. Reveal + tab order + teardown test — code complete, gate green, DOM tests
-     against `framePass`; reveal rhythm / intro feel still need the real-browser check
+     against `framePass`; pops verified clean in a real browser with IMAGE content
+     (throws into virgin territory, overshoot on — the emoji lesson above); reveal
+     rhythm / intro feel still need the deliberate real-browser pass
 - [ ] 5. Grid view + Flip toggle — code complete, gate green (`tests/view.test.tsx`,
      teardown across repeated toggles); the flight itself needs the real-browser check
      (since step 7 the playground mounts `<VitrinaControls>`, which has the toggle)
@@ -567,7 +617,10 @@ packages/vitrina test|typecheck|build`.
      "object drops back first, then the panel leaves". And with the panel open, dragging
      the plane so an object passes under the panel, that object goes BEHIND it (this is what
      distinguishes "the flight layer is right" from "every object rose"). One visible copy
-     of the active object throughout.
+     of the active object throughout. The landing seam, at 2s and at full speed: the object
+     neither blinks nor shifts on the last frame — open, close, and both relay modes (the
+     hand-off overlaps in `onComplete` and the box is unrounded; jsdom + a driven tab pin
+     the mechanism, only real frames prove the paint).
      Content lines, with `--vitrina-dur-flight` at 2s: card first, lines staggered in
      (~70 ms steps), object arriving in parallel — never text waiting for the landing;
      the close staggered out tighter (~40 ms), last line first, and NOT cut off

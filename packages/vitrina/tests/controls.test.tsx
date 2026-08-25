@@ -141,7 +141,9 @@ describe('the three reducedMotion modes', () => {
     const objectTweens = gsap.globalTimeline
       .getChildren(true, true, false)
       .filter((t) =>
-        t.targets().some((x: unknown) => x instanceof HTMLElement && x.hasAttribute('data-vitrina-object')),
+        t.targets().some(
+          (x: unknown) => x instanceof HTMLElement && x.hasAttribute('data-vitrina-object-content'),
+        ),
       );
     expect(objectTweens.length).toBeGreaterThan(0);
     landTimeline();

@@ -34,6 +34,8 @@ function Probe() {
 const idOf = (el: Element) => el.getAttribute('data-vitrina-instance') ?? '';
 const revealedOf = (els: HTMLButtonElement[]) => els.filter((el) => el.hasAttribute('data-vitrina-revealed'));
 const tabbableOf = (els: HTMLButtonElement[]) => els.filter((el) => el.tabIndex === 0);
+/** The content node the pop animates — the button's only child. */
+const contentOf = (el: Element) => el.firstElementChild as HTMLElement;
 
 beforeEach(() => {
   stubs = stubDom();
@@ -65,13 +67,15 @@ describe('reveal + tab order under reduced motion (instant)', () => {
     expect(revealed.map(idOf).sort()).toEqual([...entering].sort());
 
     for (const el of revealed) {
-      expect(el.style.opacity).toBe('1');
+      // opacity/scale live on the CONTENT node; pointer-events on the button —
+      // the hit target.
+      expect(contentOf(el).style.opacity).toBe('1');
       expect(el.style.pointerEvents).toBe('auto');
       expect(el.tabIndex).toBe(0); // centre inside the inset frame ⇒ rect inside the frame
     }
     for (const el of objects) {
       if (el.hasAttribute('data-vitrina-revealed')) continue;
-      expect(el.style.opacity).toBe('0');
+      expect(contentOf(el).style.opacity).toBe('0');
       expect(el.style.pointerEvents).toBe('none');
       expect(el.tabIndex).toBe(-1);
     }
@@ -118,7 +122,7 @@ describe('reveal + tab order under reduced motion (instant)', () => {
     const tabbableAt2 = tabbableOf(objects);
     expect(tabbableAt2.length).toBeLessThan(revealedAtHalf.length);
     expect(tabbableAt2.length).toBeGreaterThan(0);
-    for (const el of revealedOf(objects)) expect(el.style.opacity).toBe('1');
+    for (const el of revealedOf(objects)) expect(contentOf(el).style.opacity).toBe('1');
 
     // The pass measured nothing: no object, no viewport. What a zoom click does
     // measure (a handful of layer DIVs) is GSAP's Draggable re-applying its
@@ -164,7 +168,10 @@ describe('reveal + tab order with motion', () => {
     const objects = objectsOf(host);
     const isPop = (t: gsap.core.Tween | gsap.core.Timeline): t is gsap.core.Tween =>
       t instanceof gsap.core.Tween &&
-      t.targets().some((x: unknown) => x instanceof HTMLButtonElement && x.hasAttribute('data-vitrina-object'));
+      // Each pop is a zero-duration start-state set plus the animated tween;
+      // only the animated one is the pop — and it targets the CONTENT node.
+      t.duration() > 0 &&
+      t.targets().some((x: unknown) => x instanceof HTMLElement && x.hasAttribute('data-vitrina-object-content'));
     const popsOf = () => gsap.globalTimeline.getChildren(true, true, false).filter(isPop);
 
     // The intro was queued at mount: one pop per entering object.
@@ -192,10 +199,11 @@ describe('reveal + tab order with motion', () => {
       expect(el.tabIndex === 0).toBe(el.hasAttribute('data-vitrina-revealed'));
     }
     for (const t of pending) {
-      const el = t.targets()[0] as HTMLButtonElement;
-      expect(el.tabIndex).toBe(-1);
-      expect(el.style.opacity).toBe('0');
-      expect(el.style.pointerEvents).toBe('none');
+      const inner = t.targets()[0] as HTMLElement;
+      const button = inner.parentElement as HTMLButtonElement;
+      expect(button.tabIndex).toBe(-1);
+      expect(inner.style.opacity).toBe('0');
+      expect(button.style.pointerEvents).toBe('none');
     }
 
     // Advance the root clock to just past the earliest pending pop's start: that
@@ -204,15 +212,41 @@ describe('reveal + tab order with motion', () => {
     act(() => {
       gsap.globalTimeline.time(next.startTime() + 0.001);
     });
-    const el = next.targets()[0] as HTMLButtonElement;
+    const el = (next.targets()[0] as HTMLElement).parentElement as HTMLButtonElement;
     expect(el.hasAttribute('data-vitrina-revealed')).toBe(true);
     expect(el.tabIndex).toBe(0);
     expect(el.style.pointerEvents).toBe('auto');
     for (const t of pending) {
       if (t === next) continue;
-      expect((t.targets()[0] as HTMLButtonElement).tabIndex).toBe(-1);
+      expect(((t.targets()[0] as HTMLElement).parentElement as HTMLButtonElement).tabIndex).toBe(-1);
     }
 
+    await act(async () => root.unmount());
+  });
+
+  it('a completed pop rests at identity on the content node; the button is never animated', async () => {
+    const { host, root } = await mountStrict();
+    gsap.globalTimeline.pause();
+    // Run the whole intro out: every queued pop starts AND completes.
+    act(() => {
+      gsap.globalTimeline.time(gsap.globalTimeline.time() + 30);
+    });
+    const revealed = revealedOf(objectsOf(host));
+    expect(revealed.length).toBeGreaterThan(1);
+    for (const el of revealed) {
+      // Identity ON THE CONTENT NODE — a pop must END, never park at an
+      // intermediate scale (whatever spelling GSAP leaves, its effect must be
+      // the identity). The button carries no transform, ever: its box is the
+      // instance's, and the overshoot paints past it un-clipped.
+      const inner = contentOf(el);
+      expect(Number(gsap.getProperty(inner, 'scaleX'))).toBe(1);
+      expect(Number(gsap.getProperty(inner, 'scaleY'))).toBe(1);
+      expect(Number(gsap.getProperty(inner, 'x'))).toBe(0);
+      expect(Number(gsap.getProperty(inner, 'y'))).toBe(0);
+      expect(inner.style.opacity).toBe('1');
+      expect(el.style.transform).toBe('');
+      expect(el.style.pointerEvents).toBe('auto');
+    }
     await act(async () => root.unmount());
   });
 });

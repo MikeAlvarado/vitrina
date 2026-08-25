@@ -290,6 +290,103 @@ describe('a single open: panel reveals, then the object flies in', () => {
     await act(async () => root.unmount());
   });
 
+  it('every landing hand-off OVERLAPS: onComplete shows the landing copy under the still-visible visual; the commit hides the flight after', async () => {
+    const { host, root, revealed } = await mountRevealed();
+    const origin = revealed[0] as HTMLButtonElement;
+    act(() => origin.click());
+    landTimeline(); // reveal fires → the in-flight tween is live
+    const { slot, flight } = detailOf(host);
+    expect(tweensOn(flight as Element)).toHaveLength(1);
+    expect(hidden(slot)).toBe(true);
+
+    // Fire the flight's onComplete WITHOUT flushing React — in a real browser
+    // the landed commit paints a frame after the tween's last frame, and in
+    // that gap the slot must already be visible: both copies superimposed (an
+    // invisible seam), never neither (the landing blink).
+    globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+    gsap.globalTimeline.time(gsap.globalTimeline.time() + 5);
+    expect(hidden(slot)).toBe(false); // shown by onComplete itself
+    expect(hidden(flight)).toBe(false); // the commit has not hidden it yet
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    await act(async () => {}); // the landed commit
+    expect(hidden(detailOf(host).slot)).toBe(false);
+    expect(hidden(detailOf(host).flight)).toBe(true);
+    noDuplicateCopies(host);
+
+    // The close mirrors it: the out-flight's onComplete un-hides the plane
+    // instance under the visual; the commit then unmounts the flight.
+    pressEscape();
+    landTimeline(); // cover done → the object flies home
+    expect(tweensOn(detailOf(host).flight as Element)).toHaveLength(1);
+    expect(hidden(origin)).toBe(true);
+    globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+    gsap.globalTimeline.time(gsap.globalTimeline.time() + 5);
+    expect(hidden(origin)).toBe(false); // back on the plane, under the visual
+    expect(hidden(detailOf(host).flight)).toBe(false); // still up for the frame
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    await act(async () => {});
+    expect(detailOf(host).layer).toBeNull();
+    expect(hidden(origin)).toBe(false);
+
+    // And the relay's landing (serialize: A flying home while B takes over).
+    const [a, b] = origins(host);
+    act(() => a.click());
+    landUntilSettled(host);
+    act(() => b.click());
+    const relay = detailOf(host).relay as HTMLElement;
+    expect(tweensOn(relay)).toHaveLength(1);
+    expect(hidden(a)).toBe(true);
+    globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+    gsap.globalTimeline.time(gsap.globalTimeline.time() + 5);
+    expect(hidden(a)).toBe(false); // A home, under the still-visible relay
+    expect(hidden(relay)).toBe(false);
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    await act(async () => {});
+    expect(hidden(detailOf(host).relay)).toBe(true);
+    expect(hidden(a)).toBe(false);
+    landUntilSettled(host);
+    expect(hidden(detailOf(host).slot)).toBe(false);
+
+    await act(async () => root.unmount());
+  });
+
+  it('the flying copy IS the origin: rects coincide at the swap and at the first flight frame; the portal replays the root\'s text context', async () => {
+    const { host, root, revealed } = await mountRevealed({
+      props: { style: { fontFamily: 'PlaygroundSans', letterSpacing: '2px' } },
+    });
+    const origin = revealed[0] as HTMLButtonElement;
+    act(() => origin.click());
+
+    // The swap frame (park): the visual's rect is the hidden origin's, exactly —
+    // any constant offset here paints as a vertical hop at EVERY hand-off.
+    const o = origin.getBoundingClientRect();
+    const parked = (detailOf(host).flight as HTMLElement).getBoundingClientRect();
+    expect(parked.left).toBeCloseTo(o.left, 2);
+    expect(parked.top).toBeCloseTo(o.top, 2);
+    expect(parked.width).toBeCloseTo(o.width, 2);
+    expect(parked.height).toBeCloseTo(o.height, 2);
+
+    // First frame of the flight: the box is the slot's, but box + transform
+    // composes back to the origin's rect — the object has not moved yet.
+    landTimeline();
+    const fl = detailOf(host).flight as HTMLElement;
+    expect(tweensOn(fl)).toHaveLength(1);
+    expect(parseFloat(fl.style.left) + Number(gsap.getProperty(fl, 'x'))).toBeCloseTo(o.left, 2);
+    expect(parseFloat(fl.style.top) + Number(gsap.getProperty(fl, 'y'))).toBeCloseTo(o.top, 2);
+    expect(parseFloat(fl.style.width) * Number(gsap.getProperty(fl, 'scaleX'))).toBeCloseTo(o.width, 2);
+    expect(parseFloat(fl.style.height) * Number(gsap.getProperty(fl, 'scaleY'))).toBeCloseTo(o.height, 2);
+
+    // Same box is not enough — same TEXT CONTEXT: inheritance does not cross the
+    // portal, and body's typography paints the same glyph at a different height
+    // inside an identical box (font metrics move SVG baselines and line boxes).
+    // The wrapper replays the root's inheritable text style, read at mount.
+    const portal = detailOf(host).portal as HTMLElement;
+    expect(portal.style.fontFamily).toBe('PlaygroundSans');
+    expect(portal.style.letterSpacing).toBe('2px');
+
+    await act(async () => root.unmount());
+  });
+
   it('under reduced motion: no flight, no wipe delay — open at once, focus still returns', async () => {
     stubs.prefersReduced = true;
     const { host, root } = await mountStrict({ children: <Probe /> });

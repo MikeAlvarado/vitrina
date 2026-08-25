@@ -53,7 +53,7 @@
  * waiting for the object to land.
  */
 
-import type { RefObject } from 'react';
+import type { CSSProperties, RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
 import type {
@@ -97,6 +97,14 @@ export interface DetailProps {
    * frame later. False on the server and the very first client render (SSR-safe).
    */
   portalReady: boolean;
+  /**
+   * The root's inheritable text style, replayed on the portal wrapper: the
+   * wrapper lives on `body`, and inheritance does not cross a portal — without
+   * this the flying copy paints with body's typography and every hand-off jumps
+   * vertically by the difference in font metrics. Read once at mount by the
+   * orchestrator.
+   */
+  portalTextStyle: CSSProperties | undefined;
   renderObject: VitrinaProps['renderObject'];
   renderAbove: VitrinaProps['renderAbove'];
   renderBeside: VitrinaProps['renderBeside'];
@@ -135,6 +143,7 @@ export function Detail({
   relayInstanceId,
   relayFlying,
   portalReady,
+  portalTextStyle,
   renderObject,
   renderAbove,
   renderBeside,
@@ -165,7 +174,7 @@ export function Detail({
      * hit-test. Both the active clone and the relay are FLYING objects on the
      * flight rung; two layers only so they can move independently (crossfade).
      */
-    <div data-vitrina-root="" data-vitrina-flight-portal="" aria-hidden="true">
+    <div data-vitrina-root="" data-vitrina-flight-portal="" aria-hidden="true" style={portalTextStyle}>
       <div data-vitrina-relay-layer="">
         <div
           ref={relayRef}

@@ -52,6 +52,38 @@ interface Item {
   price: string;
 }
 
+/*
+ * IMAGE objects (the default): one cut-out SVG shape per entity, as a data URI
+ * <img>. Emoji-as-text stays behind the `content` toggle for A/B only — on
+ * macOS, Chrome renders emoji from Apple Color Emoji, a BITMAP (sbix) font with
+ * pre-generated strikes at fixed sizes: animating scale crosses strike
+ * thresholds and the glyph snaps between bitmaps, which makes emoji text
+ * useless for verifying scale animations.
+ */
+const hueOf = (id: string): number => {
+  let h = 0;
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+};
+const shapeUri = (id: string, i: number): string => {
+  const hue = hueOf(id);
+  const fill = `hsl(${hue} 65% 55%)`;
+  const dark = `hsl(${hue} 70% 38%)`;
+  const light = `hsl(${hue} 70% 75%)`;
+  const shape =
+    i % 3 === 0
+      ? `<circle cx="50" cy="50" r="43" fill="${fill}"/><circle cx="37" cy="37" r="12" fill="${light}"/>`
+      : i % 3 === 1
+        ? `<polygon points="50,5 93,29 93,71 50,95 7,71 7,29" fill="${fill}"/><polygon points="50,5 93,29 50,53 7,29" fill="${dark}"/>`
+        : `<polygon points="50,3 97,50 50,97 3,50" fill="${fill}"/><polygon points="50,3 97,50 50,50" fill="${dark}"/><polygon points="3,50 50,50 50,97" fill="${light}"/>`;
+  return `data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">${shape}</svg>`,
+  )}`;
+};
+const SHAPES: Record<string, string> = Object.fromEntries(
+  Object.keys(GLYPHS).map((id, i) => [id, shapeUri(id, i)]),
+);
+
 const entities: VitrinaEntity[] = Object.entries(GLYPHS).map(([id, glyph], i) => ({
   id,
   data: {
@@ -229,6 +261,9 @@ function App() {
   const [collision, setCollision] = useState<'serialize' | 'crossfade'>('serialize');
   const [theme, setTheme] = useState<Theme>('paper');
   const [slow, setSlow] = useState(false);
+  // img (default) vs emoji-as-text: the A/B that separates a library bug from a
+  // bitmap-font artifact (see the note on SHAPES).
+  const [content, setContent] = useState<'img' | 'emoji'>('img');
   const [config, setConfig] = useState<PanelConfig>(PRESETS.catálogo);
   const patch = (p: Partial<PanelConfig>) => setConfig((c) => ({ ...c, ...p }));
 
@@ -237,6 +272,7 @@ function App() {
   // breakpoint — these two lines are the whole contract.
   const compact = useMediaQuery('(max-width: 639.98px)');
   const modal = config.modal === 'on' || (config.modal === 'compact' && compact);
+
   const dismissOn = DISMISSALS.filter((d) => config.dismiss[d]);
   const activePreset =
     Object.entries(PRESETS).find(([, p]) => JSON.stringify(p) === JSON.stringify(config))?.[0] ??
@@ -385,6 +421,14 @@ function App() {
             2s flight
           </button>,
         )}
+        {row(
+          'content',
+          (['img', 'emoji'] as const).map((c) => (
+            <button key={c} type="button" onClick={() => setContent(c)} style={mini(content === c)}>
+              {c}
+            </button>
+          )),
+        )}
       </div>
       <Vitrina
         key={slow ? 'slow' : 'normal'}
@@ -411,21 +455,26 @@ function App() {
         renderDetail={config.holes.detail ? renderDetail : undefined}
         renderBelow={config.holes.below ? renderBelow : undefined}
         renderClose={config.holes.close ? renderClose : undefined}
-        renderObject={(entity) => (
-          // SVG text scales with the button (the instance size), which a font-size
-          // set from here could not know.
-          <svg
-            viewBox="0 0 100 100"
-            width="100%"
-            height="100%"
-            aria-hidden="true"
-            style={{ display: 'block' }}
-          >
-            <text x="50" y="50" fontSize="82" textAnchor="middle" dominantBaseline="central">
-              {(entity.data as Item).glyph}
-            </text>
-          </svg>
-        )}
+        renderObject={(entity) =>
+          content === 'img' ? (
+            // The real case: an image fills the box (base.css object-fit).
+            // draggable={false}: a native image drag would eat the plane's.
+            <img src={SHAPES[entity.id]} alt="" draggable={false} style={{ display: 'block' }} />
+          ) : (
+            // Emoji as text — A/B only; see the SHAPES note (bitmap-font strikes).
+            <svg
+              viewBox="0 0 100 100"
+              width="100%"
+              height="100%"
+              aria-hidden="true"
+              style={{ display: 'block' }}
+            >
+              <text x="50" y="50" fontSize="82" textAnchor="middle" dominantBaseline="central">
+                {(entity.data as Item).glyph}
+              </text>
+            </svg>
+          )
+        }
       >
         {/* The library's own optional chrome: zoom out/in + view toggle over
             useVitrina(). Unstyled by design; index.html positions it. */}

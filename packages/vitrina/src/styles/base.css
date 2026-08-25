@@ -444,17 +444,32 @@
 /* --- The object's content --------------------------------------------------- */
 
 /*
- * Every copy of an object — the plane instance, the grid card (the same
- * button), the panel slot, and both flying visuals — is a READY-SIZED BOX that
+ * The object BUTTON is two nodes since the reveal-pop fix: the button itself
+ * carries the instance's exact box (inline px on the plane, the cell token on
+ * the grid) and is NEVER animated, clipped, or contained — the pop's ease
+ * (back.out) legitimately overshoots scale 1, and anything the inner node
+ * paints past the button's content-box must stay visible (no overflow, no
+ * contain, no container-type here; the frame of the overshoot getting clipped
+ * to the box was a real bug). The CONTENT node inside fills it and is what the
+ * pop animates.
+ */
+[data-vitrina-object-content] {
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * Every copy of an object — the content node inside a plane instance or grid
+ * card, the panel slot, and both flying visuals — is a READY-SIZED BOX that
  * centres whatever renderObject returns. The direct child is capped to the box;
  * an image or inline SVG fills it outright, aspect kept. Each copy is a size
- * container (its box is always explicit: inline px on the plane, the cell/slot
- * tokens, the flight's measured rect), so text content can take its size from
- * the box via --vitrina-object-font-size. NO surface here or in any theme: the
- * object is a cut-out, and a background would hand the theme's drop-shadow the
- * rectangle instead of the silhouette.
+ * container (its box is always explicit: 100% of the button's inline px, the
+ * cell/slot tokens, the flight's measured rect), so text content can take its
+ * size from the box via --vitrina-object-font-size. NO surface here or in any
+ * theme: the object is a cut-out, and a background would hand the theme's
+ * drop-shadow the rectangle instead of the silhouette.
  */
-[data-vitrina-object],
+[data-vitrina-object-content],
 [data-vitrina-slot],
 [data-vitrina-flight],
 [data-vitrina-relay] {
@@ -467,7 +482,7 @@
 /* Declared on the child, not the container: container-query lengths resolve
    against the nearest ANCESTOR container — on the copy itself, cqmin would
    reach past it. Inherited from here by any deeper text. */
-[data-vitrina-object] > *,
+[data-vitrina-object-content] > *,
 [data-vitrina-slot] > *,
 [data-vitrina-flight] > *,
 [data-vitrina-relay] > * {
@@ -476,8 +491,8 @@
   font-size: var(--vitrina-object-font-size);
 }
 
-[data-vitrina-object] > img,
-[data-vitrina-object] > svg,
+[data-vitrina-object-content] > img,
+[data-vitrina-object-content] > svg,
 [data-vitrina-slot] > img,
 [data-vitrina-slot] > svg,
 [data-vitrina-flight] > img,

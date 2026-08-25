@@ -123,10 +123,28 @@ export interface PlaneProps {
  * Unrevealed = opacity 0 AND pointer-events none (§6.5): invisible but clickable
  * would open a panel from empty plane. Both are GSAP-owned inline styles, so the
  * reveal context's revert() restores the plain, server-rendered object.
+ * `lazy: false`: gsap.set defers its write to the end of the tick just like
+ * from/fromTo defer initial state, and a deferred baseline would land AFTER the
+ * pops created in that same tick render their first frame.
+ *
+ * TWO NODES per object: opacity/scale ride the CONTENT node, never the button.
+ * The button keeps the instance's exact box at constant scale, and the themes
+ * hang `--vitrina-object-shadow` on IT — a filter on a node that changes scale
+ * re-rasterizes across raster-scale thresholds and jumps on its own. The button
+ * also declares no overflow/contain (pinned in tests/styles.test.ts), so the
+ * pop's overshoot may paint past the box. pointer-events stays on the BUTTON:
+ * it is the hit target, and a child's `none` would not stop its clicks.
  */
-const hide = (targets: Element[], scale: number) =>
-  gsap.set(targets, { opacity: 0, scale, pointerEvents: 'none' });
-const show = (targets: Element[]) => gsap.set(targets, { opacity: 1, scale: 1, pointerEvents: 'auto' });
+/** The content node inside an object button — library-owned structure, its only child. */
+const contentOf = (el: Element): Element => el.firstElementChild ?? el;
+const hide = (targets: Element[], scale: number) => {
+  gsap.set(targets, { pointerEvents: 'none', lazy: false });
+  gsap.set(targets.map(contentOf), { opacity: 0, scale, lazy: false });
+};
+const show = (targets: Element[]) => {
+  gsap.set(targets, { pointerEvents: 'auto', lazy: false });
+  gsap.set(targets.map(contentOf), { opacity: 1, scale: 1, lazy: false });
+};
 
 export function Plane({
   entities,
@@ -372,8 +390,9 @@ export function Plane({
       const from = intro ? INTRO_SCALE : REVEAL_SCALE;
       const duration = intro ? INTRO_POP_SECONDS : REVEAL_POP_SECONDS;
       batch.forEach(([id, el], i) => {
+        // The pop animates the CONTENT node, never the button (see hide/show).
         gsap.fromTo(
-          el,
+          contentOf(el),
           { opacity: 0, scale: from },
           {
             opacity: 1,
@@ -862,12 +881,16 @@ export function Plane({
                   visibility: hiddenIds.has(inst.id) ? 'hidden' : undefined,
                 }}
               >
-                {renderObject(entity, {
-                  instanceId: inst.id,
-                  isActive: inst.entityId === activeEntityId,
-                  isRevealed: shown.has(inst.id),
-                  view: 'plane',
-                })}
+                {/* The content node: what the pop animates (a span — a button
+                    holds phrasing content only). The button above is the box. */}
+                <span data-vitrina-object-content="">
+                  {renderObject(entity, {
+                    instanceId: inst.id,
+                    isActive: inst.entityId === activeEntityId,
+                    isRevealed: shown.has(inst.id),
+                    view: 'plane',
+                  })}
+                </span>
               </button>
             );
           })}

@@ -12,6 +12,10 @@
  * of the active object is visible at any moment (plane, flight, or panel), and no
  * frame ever shows two copies of one object — every painter reads the same
  * `activeCopy(state)` / `hiddenInstancesOf(state)`, changed in one React commit.
+ * The ONE exception is the landing seam: `onComplete` shows the landing copy
+ * under the still-visible visual, exactly superimposed, until the commit hides
+ * the flight — two aligned copies read as one; a commit-only swap paints a frame
+ * with neither.
  *
  * Two things the panel does NOT do, because only the orchestrator knows when a
  * flight has landed: return focus, and move the object. While the clone flies the
@@ -21,6 +25,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { gsap } from 'gsap';
 
 import type {
@@ -176,7 +181,35 @@ export function Vitrina({
    * first client render keeps SSR/hydration in step.
    */
   const [portalReady, setPortalReady] = useState(false);
+  /*
+   * INHERITED text style does not cross the portal: the wrapper's
+   * `data-vitrina-root` stamp resolves the tokens and the theme's `color` (both
+   * ride the attribute), but the typography the consumer set on THEIR tree —
+   * body's reaches the portal instead. Two identical boxes then paint the same
+   * glyph at different heights (font metrics drive SVG text baselines and line
+   * boxes), and every copy hand-off reads as a constant vertical jump: up on
+   * lift-off, down on landing, both visuals at once in a crossfade. So the
+   * inheritable text properties are read off the root ONCE at mount (same
+   * discipline as the motion tokens) and replayed inline on the wrapper.
+   * `color` deliberately not copied — the themes set it on [data-vitrina-root]
+   * and an inline copy would pin a hot theme switch to the mount-time value.
+   */
+  const portalTextStyleRef = useRef<CSSProperties | undefined>(undefined);
   useIsomorphicLayoutEffect(() => {
+    const root = rootRef.current;
+    if (root) {
+      const cs = getComputedStyle(root);
+      portalTextStyleRef.current = {
+        fontFamily: cs.fontFamily,
+        fontSize: cs.fontSize,
+        fontWeight: cs.fontWeight,
+        fontStyle: cs.fontStyle,
+        letterSpacing: cs.letterSpacing,
+        wordSpacing: cs.wordSpacing,
+        textTransform: cs.textTransform as CSSProperties['textTransform'],
+        direction: cs.direction as CSSProperties['direction'],
+      };
+    }
     setPortalReady(true);
   }, []);
 
@@ -372,9 +405,10 @@ export function Vitrina({
    * ONCE to the destination's, one tween on x/y/scaleX/scaleY — no layout per
    * frame. Not `Flip.fit`: for two axis-aligned boxes in viewport coordinates its
    * global-matrix machinery buys nothing, and it does not run under jsdom.
-   * Landing is a React commit (`onComplete` only dispatches), so the copy the
-   * visual carried is shown by the very commit that reverts this context — never
-   * a blank frame.
+   * Landing is a React commit, and the hand-off OVERLAPS: `onComplete` shows the
+   * landing copy first (the commit that hides the visual and reverts this
+   * context arrives a frame later — swapping there alone leaves one frame with
+   * NO copy visible, the landing blink), then dispatches.
    */
   const flyVisual = (
     visual: Element,
@@ -393,6 +427,10 @@ export function Vitrina({
       y: from.top - to.top,
       scaleX: to.width === 0 ? 1 : from.width / to.width,
       scaleY: to.height === 0 ? 1 : from.height / to.height,
+      // GSAP rounds a positioned element's left/top/width/height to whole px;
+      // the destination is a fractional rect, and a box snapped to integers
+      // lands up to half a pixel off the copy it hands over to.
+      autoRound: false,
       // Promoted for the flight only; the context revert in the landing commit
       // strips it — never permanent (§7).
       willChange: 'transform',
@@ -402,6 +440,7 @@ export function Vitrina({
       y: 0,
       scaleX: 1,
       scaleY: 1,
+      autoRound: false,
       duration: seconds,
       ease: motion().easeFlight,
       onComplete,
@@ -468,6 +507,9 @@ export function Vitrina({
           y: 0,
           scaleX: 1,
           scaleY: 1,
+          // Same as the flight: a box rounded to whole px sits visibly off the
+          // fractional rect of the copy it replaces.
+          autoRound: false,
         });
       }, root);
       return () => ctx.revert();
@@ -482,7 +524,18 @@ export function Vitrina({
       return;
     }
     const ctx = gsap.context(() => {
-      flyVisual(visual, from, to, motion().durFlight, settle);
+      flyVisual(visual, from, to, motion().durFlight, () => {
+        // Overlap the hand-off: the LANDING copy becomes visible here, in the
+        // same frame the tween ends, while the flying visual is still up — the
+        // commit that `settle` triggers arrives a frame later and hides the
+        // flight. A frame with both copies superimposed is invisible; a frame
+        // with neither (swap left to the commit alone) is a visible blink.
+        // Plain DOM writes of the exact values that commit renders, so React's
+        // inline style and the DOM never disagree.
+        if (flight === 'in') slot.style.visibility = 'visible';
+        else origin.style.visibility = '';
+        settle();
+      });
     }, root);
     return () => {
       // Before the revert snaps the visual back: remember where the flight was,
@@ -517,7 +570,12 @@ export function Vitrina({
       return;
     }
     const ctx = gsap.context(() => {
-      flyVisual(visual, from, to, motion().durFlight, done);
+      flyVisual(visual, from, to, motion().durFlight, () => {
+        // Same overlap as the active flight's landing: un-hide the plane copy
+        // under the visual before the commit hides the visual.
+        origin.style.visibility = '';
+        done();
+      });
     }, root);
     return () => ctx.revert();
   }, [relayInstanceId]);
@@ -1023,6 +1081,7 @@ export function Vitrina({
             relayInstanceId={detail.relaying?.instanceId ?? null}
             relayFlying={relayFlying}
             portalReady={portalReady}
+            portalTextStyle={portalTextStyleRef.current}
             renderObject={renderObject}
             renderAbove={renderAbove}
             renderBeside={renderBeside}
