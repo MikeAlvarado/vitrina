@@ -108,6 +108,20 @@
   --vitrina-panel-fixed-inset: 0px;
 
   /*
+   * The focus ring's GEOMETRY, as three tokens (its colour is the theme's,
+   * --vitrina-focus). The ring is the one piece of chrome a keyboard visitor
+   * actually looks at, and the right offset depends on the content: the library
+   * cannot know how much air an object's cut-out leaves around its box, so the
+   * defaults are conservative — a hair off the box, square, 2px — and every
+   * consumer is expected to retune them. They INHERIT, which is the point:
+   * scoping them to a subtree ([data-vitrina-controls], say) gives that subtree
+   * its own ring without a specificity fight against this stylesheet.
+   */
+  --vitrina-focus-width: 2px;
+  --vitrina-focus-offset: 2px;
+  --vitrina-focus-radius: 0px;
+
+  /*
    * Text/emoji content. Images fill the object's box on their own (see the
    * object-content rules below); type cannot infer a size from a box, so this
    * is the knob. cqmin — every copy of an object is a size container — keeps it
@@ -181,10 +195,11 @@
  * with a programmatic .focus(), and in Chrome a programmatic focus matches
  * :focus-visible even after a mouse click — so the native ring would appear on
  * the object under the pointer every time a panel closes. The ring is therefore
- * suppressed and drawn back deliberately on :focus-visible. `2px solid
- * transparent` rather than `none`: a transparent outline still renders under
- * forced colours (Windows high contrast), where `none` would leave keyboard
- * users with nothing. Both rules live HERE, in the stylesheet — an inline
+ * suppressed and drawn back deliberately on :focus-visible. A `solid
+ * transparent` outline rather than `none`: a transparent outline still renders
+ * under forced colours (Windows high contrast), where `none` would leave
+ * keyboard users with nothing. Its width, offset and radius are the three
+ * tokens above. Both rules live HERE, in the stylesheet — an inline
  * `outline: none` would beat the :focus-visible ring.
  */
 [data-vitrina-object],
@@ -201,8 +216,12 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
-  outline: 2px solid transparent;
-  outline-offset: 2px;
+  outline: var(--vitrina-focus-width) solid transparent;
+  outline-offset: var(--vitrina-focus-offset);
+  /* Purely the ring's shape: an outline follows the element's border-radius, and
+     the button paints no surface of its own (transparent, no border), so this
+     rounds nothing but the ring. */
+  border-radius: var(--vitrina-focus-radius);
 }
 
 [data-vitrina-object]:focus-visible,

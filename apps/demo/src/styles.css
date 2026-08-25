@@ -1,0 +1,911 @@
+/*
+ * The demo's own stylesheet. It styles the PAGE around the widget and the
+ * consumer's half of the widget's contract (panel size, the close button's
+ * position, where the controls sit) — never the mechanic, which is base.css's.
+ *
+ * The palette is the theme's: --vitrina-page / --ink / --muted / --seam are
+ * defined by paper.css and void.css on [data-vitrina-root], and the page
+ * mirrors them into --demo-* so the page and the widget are visibly one object
+ * rather than a widget dropped onto a background that nearly matches. The theme
+ * switch in the config panel flips both at once.
+ *
+ * No accent colour anywhere. The specimens are the only colour on the page, and
+ * the moment the chrome competes with them the demo stops selling the library.
+ */
+
+:root {
+  --demo-page: #08080a;
+  --demo-ink: #eef0f2;
+  --demo-muted: #6b6f76;
+  --demo-surface: #101014;
+  --demo-seam: rgba(238, 240, 242, 0.14);
+  --demo-rule: rgba(238, 240, 242, 0.08);
+  --demo-hover: rgba(238, 240, 242, 0.06);
+
+  --demo-serif: ui-serif, 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  --demo-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --demo-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  --demo-gutter: clamp(20px, 5vw, 56px);
+  --demo-measure: 62ch;
+
+  color-scheme: dark;
+}
+
+:root[data-demo-theme='paper'] {
+  --demo-page: #f5f6ee;
+  --demo-ink: #222222;
+  --demo-muted: #7c7c76;
+  --demo-surface: #eceade;
+  --demo-seam: rgba(34, 34, 34, 0.18);
+  --demo-rule: rgba(34, 34, 34, 0.11);
+  --demo-hover: rgba(34, 34, 34, 0.06);
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* A visitor who asked the OS for less motion gets no smooth scroll either —
+   the library's own reduced-motion paths are a prop, this one is the page's. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--demo-page);
+  color: var(--demo-ink);
+  font-family: var(--demo-sans);
+  font-size: clamp(0.95rem, 0.4vw + 0.85rem, 1.05rem);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+  /* The plane's Draggable would otherwise select page text on a fast drag that
+     starts inside the viewport and ends outside it. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: var(--demo-ink);
+  color: var(--demo-page);
+}
+
+code {
+  font-family: var(--demo-mono);
+  font-size: 0.88em;
+}
+
+a {
+  color: inherit;
+  text-decoration-color: var(--demo-seam);
+  text-underline-offset: 0.22em;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+/*
+ * The focus ring — the page's and the widget's, deliberately one shape.
+ *
+ * This is the thing a visitor stares at while they try the keyboard, which is
+ * the section that sells the library, so none of it is left at a default. Three
+ * decisions:
+ *
+ *  · OFFSET. base.css ships 2px because the library cannot know how much air a
+ *    consumer's content leaves around its box; a cut-out specimen leaves plenty,
+ *    and a ring drawn 2px off a 190px silhouette reads as a rectangle stuck to
+ *    the object rather than an indicator of it. Pushed out to --demo-ring-gap,
+ *    the ring becomes a frame AROUND the object with the page visible between.
+ *  · RADIUS. Square corners on a round-ish mineral is the browser's answer, not
+ *    a design; the radius matches the language the controls and the panel chrome
+ *    use below.
+ *  · TONE. Full ink at full width against #08080a is the maximum-contrast answer
+ *    and it glares — it out-paints the specimen it is pointing at. The ring is
+ *    the ink pulled a little toward the page, which still clears 3:1 against
+ *    both the page and the objects, and reads as chosen. Derived from
+ *    --vitrina-ink rather than written twice, so it follows the theme switch.
+ */
+:root {
+  --demo-ring: 2px;
+  --demo-ring-gap: 7px;
+  --demo-ring-radius: 13px;
+}
+
+/*
+ * The doubled attribute is not decoration: paper.css arrives as an injected
+ * <style> LATER in the document than this file (see App.tsx), so an ordinary
+ * [data-vitrina-root] rule would set --vitrina-focus and then lose it to the
+ * theme's own the moment someone picks paper. (0,2,0) beats (0,1,0) in both
+ * themes, and the value stays derived, so the ring still flips with them.
+ */
+[data-vitrina-root][data-vitrina-root] {
+  --vitrina-focus-width: var(--demo-ring);
+  --vitrina-focus-offset: var(--demo-ring-gap);
+  --vitrina-focus-radius: var(--demo-ring-radius);
+  --vitrina-focus: color-mix(in srgb, var(--vitrina-ink) 86%, var(--vitrina-page));
+}
+
+/* Grid cards are 240px of mostly empty box, and the plane's air around an
+   object is not there — the ring hugs the card instead of floating off it. */
+[data-vitrina-grid] [data-vitrina-object] {
+  --vitrina-focus-offset: 3px;
+}
+
+/* Everything OUTSIDE the widget: the same width, the same tone, the same tokens.
+   No radius here — the page's chrome is square boxes, and a radius that appears
+   only on :focus-visible would change their shape as they take focus. */
+:where(a, button, input, select, summary):focus-visible {
+  outline: var(--demo-ring) solid color-mix(in srgb, var(--demo-ink) 86%, var(--demo-page));
+  outline-offset: 4px;
+}
+
+.wrap {
+  max-width: 1180px;
+  margin-inline: auto;
+  padding-inline: var(--demo-gutter);
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 200;
+  padding: 12px 18px;
+  background: var(--demo-ink);
+  color: var(--demo-page);
+  font: 600 0.85rem/1 var(--demo-sans);
+}
+
+.skip:focus {
+  left: 12px;
+  top: 12px;
+}
+
+/* --- The hero: the plane, full bleed, nothing written over it -------------- */
+
+/*
+ * 92dvh, not 100: the top edge of the next section peeks under the fold, which
+ * is the whole scroll affordance. A "scroll down" caption would be text over
+ * the plane, and the plane's one job here is to be dragged before it is read.
+ */
+.hero {
+  position: relative;
+  height: min(92dvh, 1040px);
+  min-height: 520px;
+  border-bottom: 1px solid var(--demo-rule);
+}
+
+.hero > [data-vitrina-root] {
+  height: 100%;
+}
+
+/*
+ * <VitrinaControls>, dressed.
+ *
+ * The library renders three buttons, each with its own data attribute, and
+ * nothing else: no layout, no surface, no radius, no opinion the tokens don't
+ * already carry. Everything below is the consumer's half — and it is the whole
+ * argument for shipping the chrome unstyled, so it had better look like it was
+ * designed rather than defaulted.
+ *
+ * Two clusters, not three buttons: the zoom pair is welded into one segmented
+ * capsule (matched radii, and zoom-out drops its right border so the two share a
+ * single hairline instead of stacking two), and the view toggle stands apart,
+ * because it changes what you are looking at rather than how much of it.
+ *
+ * The surface sits on the BUTTONS, never on the strip: base.css leaves the
+ * container `pointer-events: none` on purpose, so a drag that starts in the
+ * space around the buttons reaches the plane instead of dying on chrome — and a
+ * visible panel you cannot press is exactly the kind of detail that reads as
+ * broken. Painting only the buttons keeps the pressable area and the painted
+ * area the same shape.
+ */
+[data-vitrina-controls] {
+  position: absolute;
+  left: var(--demo-gutter);
+  bottom: clamp(18px, 3.2vh, 34px);
+  display: flex;
+  align-items: center;
+
+  /* Derived from the widget's own tokens, so the strip follows the theme switch
+     with the rest of the page rather than being re-declared per theme. */
+  --demo-chip-surface: color-mix(in srgb, var(--vitrina-page) 62%, transparent);
+  --demo-chip-surface-hover: color-mix(in srgb, var(--vitrina-page) 84%, var(--vitrina-ink));
+  --demo-chip-line-strong: color-mix(in srgb, var(--vitrina-ink) 26%, transparent);
+
+  /* The ring is drawn 7px off an object because a specimen leaves that much air.
+     A 34px chip does not: here it hugs. */
+  --vitrina-focus-offset: 3px;
+}
+
+[data-vitrina-controls] button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 15px;
+  border: 1px solid var(--vitrina-seam);
+  background: var(--demo-chip-surface);
+  color: inherit;
+  font: 500 0.68rem/1 var(--demo-mono);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  cursor: pointer;
+  /* Blurring what is behind it is what keeps the strip legible over a plane the
+     visitor is dragging — the objects passing underneath never fight the label. */
+  backdrop-filter: blur(14px) saturate(1.3);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--vitrina-ink) 7%, transparent),
+    0 10px 26px -18px rgb(0 0 0 / 0.85);
+  /* Colour only. Nothing here moves, so this stays honest with the OS
+     preference the library's own reducedMotion prop arbitrates elsewhere. */
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    opacity 150ms ease;
+}
+
+/* The zoom pair, welded.
+   Scoped through the strip on purpose: base.css styles these buttons at
+   `[data-vitrina-controls] button` (0,1,1), so a bare `[data-vitrina-zoom-out]`
+   (0,1,0) would lose the border and the radius to it whatever the file order. */
+[data-vitrina-controls] [data-vitrina-zoom-out] {
+  border-radius: 999px 0 0 999px;
+  padding-left: 17px;
+  /* Not a border of its own: zoom-in's left edge IS the divider, and two
+     adjacent 1px borders would read as a 2px seam down the middle. */
+  border-right: 0;
+}
+
+[data-vitrina-controls] [data-vitrina-zoom-in] {
+  border-radius: 0 999px 999px 0;
+  padding-right: 17px;
+}
+
+/* The toggle: its own capsule, set apart. Fixed width because the label swaps
+   between two words of different lengths — an unpinned width makes the button
+   resize under the pointer every time the view changes. */
+[data-vitrina-controls] [data-vitrina-view-toggle] {
+  min-width: 6.2rem;
+  margin-left: 8px;
+  border-radius: 999px;
+}
+
+[data-vitrina-controls] button:hover:not(:disabled) {
+  background: var(--demo-chip-surface-hover);
+  border-color: var(--demo-chip-line-strong);
+}
+
+[data-vitrina-controls] button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--vitrina-page) 70%, var(--vitrina-ink));
+}
+
+/* An end of the zoom range. Faded, but the hairline stays: the capsule keeps
+   its shape when one half is unavailable, rather than losing an edge. */
+[data-vitrina-controls] button:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+/* --- Sections ------------------------------------------------------------- */
+
+.section {
+  border-top: 1px solid var(--demo-rule);
+  padding-block: clamp(64px, 9vw, 128px);
+}
+
+.section:first-of-type {
+  border-top: 0;
+}
+
+.section-head {
+  display: grid;
+  gap: clamp(18px, 3vw, 44px);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (min-width: 860px) {
+  .section-head {
+    grid-template-columns: 11rem minmax(0, 1fr);
+  }
+}
+
+.eyebrow {
+  margin: 0;
+  font: 500 0.7rem/1.4 var(--demo-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--demo-muted);
+}
+
+.section-title {
+  margin: 0 0 0.5em;
+  font-family: var(--demo-serif);
+  font-weight: 400;
+  font-size: clamp(1.7rem, 3.4vw, 2.5rem);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  margin: 0;
+  max-width: var(--demo-measure);
+  color: var(--demo-muted);
+}
+
+.lede strong {
+  color: var(--demo-ink);
+  font-weight: 500;
+}
+
+.body {
+  max-width: var(--demo-measure);
+}
+
+.body p {
+  margin: 0 0 1em;
+}
+
+.body p:last-child {
+  margin-bottom: 0;
+}
+
+/* --- Masthead ------------------------------------------------------------- */
+
+.masthead {
+  display: grid;
+  gap: clamp(20px, 4vw, 48px);
+  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  padding-block: clamp(48px, 7vw, 96px);
+}
+
+@media (min-width: 860px) {
+  .masthead {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 22rem);
+  }
+}
+
+.wordmark {
+  margin: 0;
+  font-family: var(--demo-serif);
+  font-weight: 400;
+  font-size: clamp(3.4rem, 12vw, 8rem);
+  line-height: 0.86;
+  letter-spacing: -0.045em;
+}
+
+.tagline {
+  margin: 0.9em 0 0;
+  max-width: 46ch;
+  font-size: clamp(1.05rem, 1.1vw + 0.85rem, 1.35rem);
+  line-height: 1.42;
+}
+
+.masthead-meta {
+  display: flex;
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--demo-rule);
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font: 500 0.72rem/1 var(--demo-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--demo-muted);
+}
+
+/* --- Code ----------------------------------------------------------------- */
+
+.code {
+  margin: 0;
+  padding: 20px clamp(16px, 2.5vw, 24px);
+  border: 1px solid var(--demo-rule);
+  background: var(--demo-surface);
+  overflow-x: auto;
+  font: 400 0.8rem/1.7 var(--demo-mono);
+  tab-size: 2;
+}
+
+.code code {
+  font: inherit;
+}
+
+.code-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px clamp(16px, 2.5vw, 24px);
+  border: 1px solid var(--demo-rule);
+  border-bottom: 0;
+  background: var(--demo-surface);
+  font: 500 0.68rem/1.4 var(--demo-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--demo-muted);
+}
+
+.code-label + .code {
+  border-top: 0;
+}
+
+.shell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.shell::before {
+  content: '$';
+  color: var(--demo-muted);
+}
+
+/* --- Controls (the config panel) ------------------------------------------ */
+
+.controls {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--demo-rule);
+}
+
+.control {
+  display: grid;
+  gap: 4px 20px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  padding-block: 14px;
+  border-bottom: 1px solid var(--demo-rule);
+}
+
+@media (min-width: 720px) {
+  .control {
+    grid-template-columns: 12rem minmax(0, 1fr) 5.5rem;
+  }
+}
+
+.control-name {
+  font: 500 0.82rem/1.5 var(--demo-mono);
+}
+
+.control-note {
+  display: block;
+  font-family: var(--demo-sans);
+  font-size: 0.74rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--demo-muted);
+}
+
+.control-value {
+  font: 500 0.82rem/1.5 var(--demo-mono);
+  color: var(--demo-muted);
+  text-align: left;
+}
+
+@media (min-width: 720px) {
+  .control-value {
+    text-align: right;
+  }
+}
+
+.control-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+input[type='range'] {
+  flex: 1 1 12rem;
+  min-width: 8rem;
+  max-width: 26rem;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--demo-ink);
+  cursor: pointer;
+}
+
+input[type='text'] {
+  flex: 1 1 10rem;
+  min-width: 6rem;
+  max-width: 16rem;
+  padding: 6px 10px;
+  border: 1px solid var(--demo-seam);
+  background: transparent;
+  color: inherit;
+  font: 500 0.8rem/1.4 var(--demo-mono);
+}
+
+.pill {
+  padding: 6px 12px;
+  border: 1px solid var(--demo-seam);
+  background: transparent;
+  color: inherit;
+  font: 500 0.72rem/1.2 var(--demo-mono);
+  letter-spacing: 0.07em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pill:hover {
+  background: var(--demo-hover);
+}
+
+.pill[aria-pressed='true'] {
+  background: var(--demo-ink);
+  border-color: var(--demo-ink);
+  color: var(--demo-page);
+}
+
+.pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* The bar that says a change landed on the plane, and takes you back to it. It
+   sits in FLOW and does not stick. A bar pinned to the bottom of the viewport
+   for the length of a long section spends most of its life covering controls it
+   has nothing to do with — and the one thing on it that matters, the link back
+   up, is equally findable at the end of the section. */
+.applies {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--demo-seam);
+  background: color-mix(in srgb, var(--demo-page) 88%, transparent);
+  backdrop-filter: blur(8px);
+  font: 500 0.74rem/1.4 var(--demo-mono);
+  letter-spacing: 0.05em;
+}
+
+.applies span {
+  color: var(--demo-muted);
+}
+
+.applies a {
+  padding: 6px 12px;
+  border: 1px solid var(--demo-seam);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.applies a:hover {
+  background: var(--demo-hover);
+}
+
+/* --- Dataset toggle ------------------------------------------------------- */
+
+.datasets {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 880px) {
+  .datasets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.dataset {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px clamp(16px, 2.2vw, 24px);
+  border: 1px solid var(--demo-rule);
+}
+
+.dataset[data-current='true'] {
+  border-color: var(--demo-seam);
+  background: var(--demo-surface);
+}
+
+.dataset h3 {
+  margin: 0;
+  font-family: var(--demo-serif);
+  font-weight: 400;
+  font-size: 1.28rem;
+  letter-spacing: -0.01em;
+}
+
+.dataset p {
+  margin: 0;
+  flex: 1;
+  font-size: 0.9rem;
+  color: var(--demo-muted);
+}
+
+.dataset .code {
+  font-size: 0.74rem;
+}
+
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.strip img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+/* --- Accessibility list --------------------------------------------------- */
+
+.claims {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  border-top: 1px solid var(--demo-rule);
+}
+
+.claim {
+  display: grid;
+  gap: 4px 24px;
+  grid-template-columns: minmax(0, 1fr);
+  padding-block: 18px;
+  border-bottom: 1px solid var(--demo-rule);
+}
+
+@media (min-width: 780px) {
+  .claim {
+    grid-template-columns: 15rem minmax(0, 1fr);
+  }
+}
+
+.claim dt {
+  margin: 0;
+  font: 500 0.82rem/1.5 var(--demo-mono);
+}
+
+.claim dd {
+  margin: 0;
+  max-width: var(--demo-measure);
+  color: var(--demo-muted);
+}
+
+.claim dd code {
+  font: 500 0.86em/1 var(--demo-mono);
+  color: var(--demo-ink);
+}
+
+/* --- Credits / footer ----------------------------------------------------- */
+
+.colophon {
+  display: grid;
+  gap: clamp(24px, 4vw, 48px);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 880px) {
+  .colophon {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.colophon h3 {
+  margin: 0 0 0.6em;
+  font: 500 0.7rem/1.4 var(--demo-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--demo-muted);
+}
+
+.colophon p {
+  margin: 0 0 0.9em;
+  max-width: 52ch;
+  font-size: 0.92rem;
+}
+
+.colophon p:last-child {
+  margin-bottom: 0;
+}
+
+.footline {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding-block: 22px clamp(28px, 4vw, 48px);
+  border-top: 1px solid var(--demo-rule);
+  font: 500 0.7rem/1.5 var(--demo-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--demo-muted);
+}
+
+/* --- The consumer's half of the panel contract ---------------------------- */
+
+/*
+ * The library ships NO breakpoints: how much of the widget the panel covers and
+ * how much band the content reserves for the ✕ are the consumer's media
+ * queries on the library's tokens. `--vitrina-panel-fixed-inset` is the content
+ * column's padding; it is what keeps the copy clear of the close button.
+ */
+[data-vitrina-root] {
+  --vitrina-panel-size: 100%;
+  --vitrina-panel-fixed-inset: 68px clamp(20px, 5vw, 32px) 28px;
+  --vitrina-detail-object: clamp(150px, 42vw, 230px);
+}
+
+@media (min-width: 860px) {
+  [data-vitrina-root] {
+    --vitrina-panel-size: 46%;
+    --vitrina-panel-fixed-inset: 40px clamp(24px, 3vw, 44px) 36px;
+    --vitrina-detail-object: clamp(190px, 19vw, 310px);
+  }
+}
+
+/* The ✕ lives in the library's fixed region — which can never scroll away and
+   sits outside the card's clip-path, so it may stick out past the seam without
+   being cut into a crescent. Which corner it takes is ours. */
+.panel-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  /* Round, like the strip over the plane: the widget's chrome is one family,
+     and this button straddles the seam where the two halves meet. */
+  border-radius: 999px;
+  border: 1px solid var(--vitrina-seam);
+  background: var(--vitrina-panel-surface);
+  color: inherit;
+  font: 400 1.1rem/1 var(--demo-sans);
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.panel-close:hover {
+  border-color: color-mix(in srgb, var(--vitrina-ink) 26%, transparent);
+  background: color-mix(in srgb, var(--vitrina-panel-surface) 82%, var(--vitrina-ink));
+}
+
+@media (min-width: 860px) {
+  [data-vitrina-panel-side='right'] .panel-close {
+    top: 24px;
+    left: -19px;
+    right: auto;
+  }
+
+  [data-vitrina-panel-side='left'] .panel-close {
+    top: 24px;
+    right: -19px;
+  }
+}
+
+/* --- The panel's content (the consumer's render props) -------------------- */
+
+.panel-eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 0 0 14px;
+  font: 500 0.68rem/1.4 var(--demo-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--vitrina-muted);
+}
+
+.panel-title {
+  margin: 0;
+  font-family: var(--demo-serif);
+  font-weight: 400;
+  font-size: clamp(1.6rem, 3.2vw, 2.2rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.panel-sub {
+  margin: 0.5em 0 0;
+  font-size: 0.92rem;
+  color: var(--vitrina-muted);
+}
+
+.panel-specs {
+  display: grid;
+  gap: 0;
+  margin: 26px 0 0;
+  border-top: 1px solid var(--vitrina-seam);
+}
+
+.panel-specs > div {
+  display: grid;
+  gap: 2px 20px;
+  grid-template-columns: 8.5rem minmax(0, 1fr);
+  padding-block: 11px;
+  border-bottom: 1px solid var(--vitrina-seam);
+}
+
+.panel-specs dt {
+  margin: 0;
+  font: 500 0.68rem/1.7 var(--demo-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--vitrina-muted);
+}
+
+.panel-specs dd {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.panel-note {
+  margin: 22px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--vitrina-muted);
+}
+
+.panel-link {
+  display: inline-block;
+  margin-top: 22px;
+  font: 500 0.74rem/1.4 var(--demo-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 32px;
+}
+
+.panel-foot .count {
+  margin-left: auto;
+  font: 500 0.72rem/1 var(--demo-mono);
+  letter-spacing: 0.1em;
+  color: var(--vitrina-muted);
+}
+
+.panel-step {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--vitrina-seam);
+  background: transparent;
+  color: inherit;
+  font: 400 0.9rem/1 var(--demo-sans);
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.panel-step:hover {
+  border-color: color-mix(in srgb, var(--vitrina-ink) 26%, transparent);
+  background: color-mix(in srgb, var(--vitrina-panel-surface) 82%, var(--vitrina-ink));
+}
+
+/* The character, as text, beside its vector twin — the demo's own footnote to
+   the note in the README about judging scale animations with emoji. */
+.glyph-text {
+  font-size: 2.6rem;
+  line-height: 1;
+}

@@ -400,6 +400,15 @@ center`, `scale` only. Pan layer inside it = world-sized, `translate` only. With
   button; the toggle renames itself `toGrid`/`toPlane`). Renders `null` under
   `viewLocked` — all three would be no-ops. `labels.closeDetail` remains for the
   consumer's own close control; neither the panel shell nor the controls render one.
+- **The focus ring is FOUR tokens, three of them geometry.** `--vitrina-focus` (colour,
+  in every theme's set) plus `--vitrina-focus-width` / `-offset` / `-radius` in base.css,
+  consumed by the button reset (the radius rounds nothing but the ring — the button
+  paints no surface). Defaults stay conservative (2px / 2px / 0) because the library
+  cannot know how much air a consumer's content leaves around an object's box, and they
+  INHERIT: scoping them to a subtree (`[data-vitrina-controls]`, the grid) retunes that
+  subtree's ring with no specificity fight against the stylesheet. Pinned in
+  `tests/styles.test.ts` — a hard-coded value in the reset is a consumer forced to
+  out-specify base.css to move their own ring.
 - Draggable gets `cursor: 'grab'` / `activeCursor: 'grabbing'` explicitly: its default
   writes an inline `cursor: move` on the trigger that would beat the stylesheet.
 
@@ -580,8 +589,13 @@ record** (Smithsonian is not blanket CC0); every asset gets a `CREDITS.md` entry
 
 ## Commands
 
-`pnpm check` = lint + typecheck + test + build (root). Per-package: `pnpm -C
+`pnpm check` = lint + typecheck + test + build (root); `pnpm -r` is topological, so the
+library builds before `apps/demo` compiles against its `dist`. Per-package: `pnpm -C
 packages/vitrina test|typecheck|build`.
+
+Browser: `pnpm -C apps/playground dev` (aliases the library SOURCE — HMR, the bench for
+mechanic work) and `pnpm -C apps/demo dev` (consumes `dist`, so run `pnpm -C
+packages/vitrina build` first; `pnpm -C apps/demo preview` builds and serves it).
 
 ## Status (order of work, §11)
 
@@ -668,7 +682,86 @@ packages/vitrina test|typecheck|build`.
      emits the 114 objects plain. (Importing BOTH themes at once lets the consumer's CSS
      minifier drop the earlier one — identical selectors, fully overridden; the
      documented contract is exactly one theme, so not a packaging bug.)
-- [ ] 9. `apps/demo` (Vite + React + TS, void theme, minerals + emoji datasets)
+- [ ] 9. `apps/demo` (Vite + React + TS, void theme, minerals + emoji datasets) —
+     code complete, gate green (`pnpm check` now builds the library, then typechecks
+     and builds the demo against it). One page, ONE `<Vitrina>` above the fold; every
+     section below sets props on it. Sections in order: the plane full-bleed with no
+     copy over it (92dvh, so the next section peeks and is the only scroll cue),
+     install, live config panel, dataset toggle, accessibility, credits.
+     Real-browser checks still pending — the automated tab freezes rAF, so nothing
+     below is about feel: drag/inertia on the demo's own plane, the reveal rhythm at
+     the demo's `count`, the flight into the panel at both `--vitrina-panel-size`
+     breakpoints, the grid toggle, and the theme switch mid-flight. Plus, from the
+     chrome pass: the focus ring (2px / 7px off / 13px radius, ink mixed 86% toward
+     the page) on a plane object, on a grid card (offset drops to 3px — a card has no
+     air around it) and on a control chip, at a DESKTOP width; and the control strip's
+     hover/active/disabled over a plane being dragged, where the backdrop blur is the
+     thing that has to hold up. The automated tab confirmed the static paint only, and
+     at 349px CSS — it refused to resize.
+     Decisions worth keeping:
+     - **It consumes `dist`, never `src` — no Vite alias.** `vitrina` resolves through
+       the workspace link into the package's `exports` map. It is the ONLY thing in the
+       repo that breaks if the exports map, the build, or `files` is wrong; the
+       playground aliases the source and would keep working through all three. This is
+       why the demo has `typecheck` and `build` scripts: `pnpm -r` is topological, so
+       the gate builds the library first and then compiles the demo against the real
+       artifact. Verified in the built output: base.css structure, void's tokens, the
+       demo's own sheet, and paper inlined via `?inline` all land in `dist/assets`.
+     - **The quick-start snippet is a real file** (`src/examples/QuickStart.example.tsx`)
+       read with `?raw` and rendered into the page. It is inside the demo's `tsc` and
+       its build, so a renamed prop fails the gate instead of rotting on the page. A
+       snippet typed into markup cannot fail.
+     - **Exactly one theme is imported for real** (`vitrina/themes/void.css`), because
+       that is the documented contract. The config panel's paper option is the sole
+       exception and is handled the only way a live switch can be: paper is pulled in as
+       TEXT (`?inline`) and injected into a `<style>` while selected — importing both
+       for real leaves the outcome to file order and lets a minifier drop one.
+     - **The page's palette mirrors the theme's tokens** into `--demo-*` (and stamps
+       `data-demo-theme` on `<html>`), so the widget never reads as a component dropped
+       onto a background that nearly matches. No accent colour anywhere: the specimens
+       are the only colour on the page.
+     - **`modal` is tied to the SAME breakpoint as `--vitrina-panel-size`** (860px), one
+       declared in `App.tsx` and one in `styles.css` — under it the panel covers the
+       plane completely and free focus would send Tab into a plane nobody can see.
+     - **The config panel stays a config panel.** Sliders setting props on a fixed
+       component; no export, no embeddable artifact — GSAP's licence bars no-code
+       animation builders and that line is not worth approaching.
+     - **`layout` is memoised on the five primitives**, not on the config object: the
+       library memoises generated instances on the `layout` identity, so a fresh object
+       per render would regenerate 114 instances on every keystroke in the seed field.
+     - **No sticky "applied to the plane" bar.** It was tried; pinned to the viewport
+       for the length of a long section it spends its life covering controls it has
+       nothing to do with, and the only thing on it that matters (the link back up) is
+       equally findable at the end of the section.
+     - Content: **24 CC0 specimens from NMNH Mineral Sciences**, chosen because the
+       records carry real metadata (species, locality, catalogue number, cut, weight,
+       associated minerals) and that fills the panel with true copy instead of 24
+       invented paragraphs. Nothing from the Met: its holdings are jewellery, not
+       specimens, and mixing them would dilute the set — NMNH alone produced 24 verified
+       records. **Rights were verified per record, live**, on each `si.edu/object/…`
+       page, and the check is `media--openaccess` (the IMAGE is CC0) AND *Metadata
+       Usage* `CC0` — because a record can be CC0 metadata over a restricted photograph,
+       which is the trap. Calibrated against a known negative from the same museum: The
+       Hope Diamond (`siris_sic_8819`) is `media--no-openaccess`, and
+       `siris_arc_402896` is `media--no-openaccess` WITH CC0 metadata. Every statement
+       is in `apps/demo/assets/CREDITS.md`, per file.
+     - **The cut-outs are made for near-black, which is a different job from cutting for
+       print.** A matte lifted against a museum's white cloth leaves the edge ramp
+       carrying that white — invisible over paper, a milky halo over `#08080A`. Two
+       things prevent it, both in `apps/demo/tools/cutout.py` (committed, so the claim
+       is checkable): the mask is ERODED before it is feathered, so the ramp sits on
+       pixels that were interior to the specimen; and every transparent pixel's RGB is
+       overwritten with the nearest foreground colour, so neither the browser's
+       resampling nor the WebP encoder can pull the background back in. Cast shadows are
+       classified as background by chromaticity (same hue as the cloth, lower luminance)
+       — left in, they weld a grey puddle to the specimen. Ran once; the `.webp` files
+       are committed and nothing is fetched or reprocessed at build time.
+     - **Second dataset: Twemoji 17.0.3 SVG files (CC-BY 4.0), not emoji characters.**
+       The point is content-agnosticism — same component, same props, non-photographic
+       content one click away — and shipping the CHARACTER would have walked straight
+       into the bitmap-font trap on the very page that demonstrates the motion. The
+       emoji panel shows the character as text beside its vector twin, which makes the
+       README's note visible instead of merely stated.
 
 ## reference/
 

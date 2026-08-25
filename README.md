@@ -110,6 +110,17 @@ const emoji: VitrinaEntity[] = ['🌋', '🪐', '🦑', '🌵', '🎈', '🪞', 
 The glyph takes its size from the box (`--vitrina-object-font-size`); the images fill
 theirs. Neither render prop mentions a dimension.
 
+> **Emoji as text is fine to ship and useless for judging a scale animation — on
+> macOS.** Chrome draws emoji characters from Apple Color Emoji, a *bitmap* (sbix)
+> font with pre-generated strikes at fixed sizes. Under an animated scale — the
+> reveal's 0.6 → 1 pop, the zoom step, the flight into the panel — the glyph snaps
+> from one strike to the next, and what you see is a crisp size jump mid-animation
+> that looks exactly like a broken tween. The DOM, the tween's own frames and the
+> geometry will all measure perfect, because nothing is wrong: the font simply has
+> no in-between size. **Verify motion with images or inline SVG** (`apps/demo`
+> ships its emoji dataset as Twemoji SVG files for this reason) and keep
+> emoji-as-text for the content test it is good at.
+
 Entities are **what exists**; instances are **where copies appear**. Each entity is
 repeated across the plane (a plane with 15 objects reads as empty), deterministically
 from `layout.seed` — same seed, same plane, on the server and on every client. The
@@ -249,6 +260,26 @@ knobs (`--vitrina-grid-cell`, `--vitrina-grid-gap`, `--vitrina-detail-object`,
 `--vitrina-panel-size`, `--vitrina-panel-fixed-inset`, `--vitrina-object-font-size`)
 are ordinary custom properties a theme — or your own stylesheet — may retune under
 media queries.
+
+**The focus ring** is four tokens: `--vitrina-focus` (its colour, part of every
+theme's set) plus `--vitrina-focus-width` (`2px`), `--vitrina-focus-offset` (`2px`) and
+`--vitrina-focus-radius` (`0px`) for its geometry. The defaults are deliberately
+conservative — the library cannot know how much air your content leaves around an
+object's box — and the ring is the one piece of chrome a keyboard visitor looks at, so
+retuning them is expected rather than exotic. They **inherit**, so scoping them to a
+subtree gives that subtree its own ring with no specificity fight against the
+stylesheet:
+
+```css
+[data-vitrina-root] {
+  --vitrina-focus-offset: 7px; /* off a cut-out with air around it */
+  --vitrina-focus-radius: 13px;
+}
+
+[data-vitrina-controls] {
+  --vitrina-focus-offset: 3px; /* a 34px button has no air to spare */
+}
+```
 
 ## Controls
 
@@ -500,6 +531,26 @@ ones) became public. Only the GSAP core is imported statically; the plugins the
 mechanic uses (`Draggable`, `InertiaPlugin`, `Flip`, `Observer`) load via dynamic
 `import()` inside an effect — nothing GSAP-related runs on the server, and ~21 KB gzip
 stays off the critical path.
+
+## The demo
+
+`apps/demo` is a single page that mounts one `<Vitrina>` above the fold and drives it
+from the sections below: a live config panel (`count`, `columns`, `sizeJitter`,
+`minSeparation`, `seed`, theme, `panelSide`), and a dataset toggle between 24 cut-out
+mineral specimens from the Smithsonian's Mineral Sciences collection and 24 Twemoji
+SVGs — the same component, the same props, non-photographic content one click away.
+
+It consumes **`dist`** through the package's `exports` map, deliberately the opposite
+of `apps/playground`, which aliases the library's source for HMR. That makes the demo
+the only thing in the repo that breaks if the exports map, the build or the published
+file list is wrong, and it is in the root gate (`pnpm check` builds the library first,
+then typechecks and builds the demo against it).
+
+```sh
+pnpm -C apps/demo dev       # needs pnpm -C packages/vitrina build first
+```
+
+Asset provenance and per-file rights: `apps/demo/assets/CREDITS.md`.
 
 ## Credits
 

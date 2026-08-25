@@ -151,6 +151,28 @@ describe('base.css is structural and theme-blind', () => {
       expect(cssDecl('[data-vitrina-root]', token), token).not.toBeNull();
     }
   });
+
+  it('draws the focus ring from tokens only — a consumer retunes it by inheritance, not by out-specifying this sheet', () => {
+    // Geometry: three tokens with conservative defaults (the library cannot know
+    // how much air a consumer's content leaves around an object's box).
+    expect(cssDecl('[data-vitrina-root]', '--vitrina-focus-width')).toBe('2px');
+    expect(cssDecl('[data-vitrina-root]', '--vitrina-focus-offset')).toBe('2px');
+    expect(cssDecl('[data-vitrina-root]', '--vitrina-focus-radius')).toBe('0px');
+
+    // And the reset consumes all three — a hard-coded value here is a consumer
+    // fighting specificity to move their own ring.
+    const reset = cssBodies('[data-vitrina-object]').join(';');
+    expect(reset).toMatch(/outline\s*:\s*var\(--vitrina-focus-width\)\s+solid\s+transparent/);
+    expect(reset).toMatch(/outline-offset\s*:\s*var\(--vitrina-focus-offset\)/);
+    // The outline follows border-radius; the button paints no surface, so this
+    // rounds the ring and nothing else.
+    expect(reset).toMatch(/border-radius\s*:\s*var\(--vitrina-focus-radius\)/);
+
+    // The colour stays the theme's, with a theme-blind fallback.
+    for (const selector of ['[data-vitrina-object]:focus-visible', '[data-vitrina-controls] button:focus-visible']) {
+      expect(cssDecl(selector, 'outline-color'), selector).toBe('var(--vitrina-focus, currentColor)');
+    }
+  });
 });
 
 describe('the composable panel', () => {
