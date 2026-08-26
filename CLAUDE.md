@@ -661,6 +661,41 @@ Browser: `pnpm -C apps/playground dev` (aliases the library SOURCE — HMR, the 
 mechanic work) and `pnpm -C apps/demo dev` (consumes `dist`, so run `pnpm -C
 packages/vitrina build` first; `pnpm -C apps/demo preview` builds and serves it).
 
+## Deploy
+
+- The demo is the only thing deployed: Firebase Hosting, project `vitrina-react`, live at
+  https://vitrina-react.web.app. `pnpm deploy:demo` (live) / `pnpm deploy:preview` (a
+  temporary channel URL). **Never `pnpm deploy`** — that is pnpm's own built-in command
+  and it shadows a script of that name, which is why the scripts are suffixed.
+- **`firebase.json` is at the REPO ROOT and hand-written.** Root because `predeploy` must
+  build the library and THEN the demo: the demo compiles against `dist`, and a deploy run
+  from `apps/demo` alone would ship the page against whatever `dist` happened to be on
+  disk. Hand-written because `firebase init hosting` CRASHES in this workspace — its
+  framework auto-detection `require()`s Vite, which is ESM-only here, and throws
+  `ERR_REQUIRE_ESM` before writing a single file. A plain `public` key is classic static
+  hosting and never reaches that code path; never add `frameworksBackend`.
+- No SPA rewrite: one page, no client router, so a wrong path should 404 rather than
+  serve the demo. Hashed assets `immutable`, `index.html` `no-cache` — Vite hashes the
+  filenames, so the only file that must never be cached is the one that names them.
+- `index.html` carries the canonical URL and the OG tags. No `og:image` yet: it has to be
+  a real frame of the plane, and an invented one is worse than none.
+- The live URL is also how §11's pending real-browser checks get done on a REAL phone —
+  the one surface the automated tab and `pnpm preview` on localhost cannot stand in for.
+- The README's "In the wild" section names Mediterra's live shop as a production consumer
+  and links the demo's own URL. Both are outward claims — on someone else's site and on
+  this deploy staying up. Keep them true.
+- **Its two screenshots live in `docs/`** and are referenced RELATIVELY from the root
+  README but by ABSOLUTE `raw.githubusercontent.com` URL from the package README:
+  `files: ["dist"]` means no image ever ships inside the tarball, so npm's copy has to
+  point back at the repo, and it can only resolve once `main` carries the file.
+- **Capturing them needs a trick.** An automated tab is `visibilityState: 'hidden'`, where
+  Chrome suspends rAF entirely — every reveal tween sits at its from-state and the plane
+  paints EMPTY. Put the in-frame `[data-vitrina-object-content]` nodes at the tween's end
+  state by hand (`opacity: 1`, `transform: none` — where they rest anyway), then WAIT: the
+  objects' images are `loading="lazy"` and only start fetching once painted, so the first
+  capture after the write is still blank. Works on any site running the mechanic, this
+  one's bundle or not.
+
 ## Status (order of work, §11)
 
 - [x] 1. Scaffold + types + `generateInstances` + tests — determinism proven over 100 runs

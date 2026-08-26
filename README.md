@@ -9,6 +9,23 @@ Interaction reference: [Palmer Dinnerware](https://palmer-dinnerware.com). This 
 independent implementation of the interaction pattern; no code, assets, or copy of
 theirs were used.
 
+## In the wild
+
+[**The demo**](https://vitrina-react.web.app) — every prop on a live plane, over 24 CC0
+mineral specimens from the Smithsonian and 24 Twemoji SVGs, one toggle apart.
+
+[![The demo — mineral cut-outs on the plane, void theme](docs/demo.jpg)](https://vitrina-react.web.app)
+
+[**Mediterra**](https://mediterra-mx.web.app/en/shop) — the shop, in production: a plane
+of product cut-outs, the detail panel on the left, the grid as the catalogue. That is
+the layout written out under
+[A complete panel](#a-complete-panel-the-mediterra-layout).
+
+[![Mediterra's shop — product cut-outs on the plane, paper theme](docs/mediterra.jpg)](https://mediterra-mx.web.app/en/shop)
+
+Both are the same component; the two shots are the two themes the library ships — `void`
+above, `paper` below.
+
 ## Install
 
 ```sh
@@ -481,9 +498,10 @@ warning, once.
 
 ### A complete panel (the Mediterra layout)
 
-Panel on the left; full width under 640 px and half above (CSS above); code and tag on
-top; a vertical thumbnail rail beside the object; name and price below it; arrows at
-the foot; a ✕ that under 640 px moves to the top-right corner:
+The layout [Mediterra](https://mediterra-mx.web.app/en/shop) runs, in full: panel on the
+left; full width under 640 px and half above (CSS above); code and tag on top; a
+vertical thumbnail rail beside the object; name and price below it; arrows at the foot;
+a ✕ that under 640 px moves to the top-right corner:
 
 ```tsx
 <Vitrina
@@ -653,6 +671,27 @@ pnpm -C apps/demo dev       # needs pnpm -C packages/vitrina build first
 ```
 
 Asset provenance and per-file rights: `apps/demo/assets/CREDITS.md`.
+
+### Deploying it
+
+The demo is a plain static build, hosted at
+[vitrina-react.web.app](https://vitrina-react.web.app):
+
+```sh
+pnpm deploy:preview   # a temporary channel URL — nothing public changes
+pnpm deploy:demo      # the live site
+```
+
+`firebase.json` lives at the **repo root**, not in `apps/demo`, because the deploy has
+to build two packages in order: its `predeploy` runs the library's build and then the
+demo's, so what goes up is always compiled against a fresh `dist` — the same reason the
+demo consumes `dist` at all. The uploaded directory is `apps/demo/dist`; hashed assets
+are served `immutable`, `index.html` `no-cache`.
+
+Write that file by hand — **do not run `firebase init hosting` in this workspace.** The
+CLI's framework auto-detection `require()`s Vite, which is ESM-only here, and dies with
+`ERR_REQUIRE_ESM` before it writes anything. Plain static hosting (a `public` key) never
+reaches that code path.
 
 ## Credits
 

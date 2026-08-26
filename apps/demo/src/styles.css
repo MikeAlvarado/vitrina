@@ -440,6 +440,20 @@ a:hover {
   line-height: 1.42;
 }
 
+/* Sits under the tagline in the same register as the meta strip beside it. */
+.inwild {
+  margin: 1.4em 0 0;
+  font: 500 0.72rem/1.4 var(--demo-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--demo-muted);
+}
+
+.inwild a {
+  color: var(--demo-ink);
+  text-decoration-color: var(--demo-rule);
+}
+
 .masthead-meta {
   display: flex;
   margin: 0;

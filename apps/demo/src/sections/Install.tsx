@@ -25,6 +25,13 @@ export function Install() {
             a grid view they Flip into, and a detail panel one object flies into while
             the plane stays alive beside it.
           </p>
+          {/* The one outward claim on the page: it is not only a demo. */}
+          <p className="inwild">
+            In production on{' '}
+            <a href="https://mediterra-mx.web.app/en/shop" target="_blank" rel="noreferrer">
+              Mediterra ↗
+            </a>
+          </p>
         </div>
         <p className="masthead-meta">
           <span>MIT</span>
