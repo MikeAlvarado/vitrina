@@ -641,6 +641,59 @@ untransformed; the client hydrates and takes over pan, zoom, and reveal. Positio
 deterministic from `layout.seed` (no `Math.random()` anywhere), so the server and the
 client generate the same plane and hydration matches.
 
+### Next.js (App Router)
+
+`renderToString` working in Node is not the same as `<Vitrina>` being a Server
+Component, and what separates them is the props: `renderObject`, `renderDetail`,
+`renderCard`, `renderGridHeader` and `labels.objectLabel` are all **functions**, and
+functions do not cross the server→client boundary. The boundary therefore sits above
+them — the client wrapper is yours, and it is what carries the directive:
+
+```tsx
+// app/gallery.tsx
+'use client';
+
+import { Vitrina } from 'vitrina';
+import type { VitrinaEntity } from 'vitrina';
+import 'vitrina/styles.css';
+import 'vitrina/themes/paper.css'; // same file, right after base — see below
+
+export function Gallery({ entities }: { entities: VitrinaEntity[] }) {
+  return (
+    <Vitrina
+      entities={entities}
+      labels={labels}
+      renderObject={(e) => <img src={String(e.data)} alt="" draggable={false} />}
+      style={{ height: '100dvh' }}
+    />
+  );
+}
+```
+
+```tsx
+// app/page.tsx — stays a Server Component
+import { Gallery } from './gallery';
+
+export default async function Page() {
+  const entities = await loadEntities(); // plain data crosses; functions do not
+  return <Gallery entities={entities} />;
+}
+```
+
+- **The package ships no `'use client'` of its own**, deliberately. The directive on
+  the library would not save the render props — you would still need a client module
+  of your own to define them — and it would plant a boundary inside a library that
+  most of its consumers build without React Server Components at all.
+- **Both stylesheets are imported from the same file, in that order.** The theme
+  overrides base.css's custom properties, so it has to come second; split across two
+  modules, the order becomes the bundler's to decide.
+- **The plane is still server-rendered.** A client component is prerendered on the
+  server too, so the objects reach the HTML at their generated positions exactly as
+  described above — `'use client'` marks the hydration boundary, not "browser only".
+  There is no reason to reach for `dynamic(…, { ssr: false })` here: nothing in the
+  library touches a browser global at module scope, so it would drop the plane out of
+  the HTML for nothing.
+
 ## Why GSAP is a peer dependency
 
 GSAP is free — including for commercial use — but it is **not MIT-licensed**. Bundling
