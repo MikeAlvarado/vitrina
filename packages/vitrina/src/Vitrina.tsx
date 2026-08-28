@@ -861,6 +861,25 @@ export function Vitrina({
   }, [closeDetail]);
 
   /*
+   * `data-vitrina-gesture` on the root while the plane is actually moving (drag,
+   * inertia throw, wheel chase). It exists for the consumer's chrome: anything
+   * painted over a plane in motion — a backdrop-filter above all — is re-composited
+   * every frame of the gesture, and the CSS is the only place that can back off.
+   *
+   * A direct DOM write, never state: this flips at both ends of every gesture, and
+   * a re-render of the whole widget there is exactly the cost the attribute exists
+   * to save. For the same reason it is not on `useVitrina()` — an API that forced a
+   * render would be a worse deal than the effect it turns off. Stamped whatever the
+   * reduced-motion mode: the plane still moves under reduced motion.
+   */
+  const onPlaneGesture = useCallback((moving: boolean) => {
+    const root = rootRef.current;
+    if (!root) return;
+    if (moving) root.setAttribute('data-vitrina-gesture', '');
+    else root.removeAttribute('data-vitrina-gesture');
+  }, []);
+
+  /*
    * `modal`: trap focus in the panel. It exists for the panel that covers
    * everything — free focus there sends Tab into a plane nobody sees. A keydown
    * cycle over the panel's focusables (no inert, no overlay: with modal false
@@ -1043,6 +1062,7 @@ export function Vitrina({
             onOpen={openDetail}
             onNode={registerNode}
             onDragStart={onPlaneDragStart}
+            onGesture={onPlaneGesture}
             motion={motion}
           />
         ) : (

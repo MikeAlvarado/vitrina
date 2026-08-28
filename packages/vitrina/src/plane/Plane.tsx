@@ -108,6 +108,11 @@ export interface PlaneProps {
   onNode: (instanceId: string, el: HTMLElement | null) => void;
   /** A real drag started (past the click threshold) — the root's `dismissOn: 'planeDrag'` hook. */
   onDragStart?: () => void;
+  /**
+   * The pan layer started/stopped moving (drag, throw, wheel chase). The root
+   * stamps `data-vitrina-gesture` from it — a DOM write, never state.
+   */
+  onGesture: (moving: boolean) => void;
   /** The motion tokens, read once at the root's mount. */
   motion: GetMotion;
 }
@@ -249,6 +254,7 @@ export function Plane({
   onOpen,
   onNode,
   onDragStart,
+  onGesture,
   motion,
 }: PlaneProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -301,6 +307,8 @@ export function Plane({
    * objects get a wrapper that never changes, and it reads the current handler.
    */
   const onOpenRef = useRef(onOpen);
+  /** Read by the movers (created once per geometry) so a prop change needs no rebuild. */
+  const onGestureRef = useRef(onGesture);
   /** Re-renders once per finished reveal batch so `renderObject` sees `isRevealed` flip. */
   const [, bumpRevealed] = useReducer((n: number) => n + 1, 0);
 
@@ -470,6 +478,9 @@ export function Plane({
   useIsomorphicLayoutEffect(() => {
     onOpenRef.current = onOpen;
   }, [onOpen]);
+  useIsomorphicLayoutEffect(() => {
+    onGestureRef.current = onGesture;
+  }, [onGesture]);
 
   const handleOpen = useCallback(
     (entityId: string, instanceId: string) => onOpenRef.current(entityId, instanceId),
@@ -656,6 +667,8 @@ export function Plane({
     let cancelled = false;
     let drag: Draggable | null = null;
     let wheel: Observer | null = null;
+    /** Clears a gesture the cleanup interrupts. Assigned once the movers exist. */
+    let endGesture: (() => void) | null = null;
 
     const ctx = gsap.context(() => {
       // The LIVE scale, not the prop: recreating this effect mid-zoom-tween must
@@ -686,25 +699,47 @@ export function Plane({
         const bounds = panBounds(world, view, zoomAppliedRef.current);
 
         /*
-         * will-change, put on and taken off (§7): the pan layer is promoted while
-         * a gesture is actually moving it — pointer down, inertia throw, or the
-         * wheel chase — and demoted the moment everything is at rest. Never
-         * permanent: a forever-promoted layer squats on GPU memory for the life
-         * of the page. Skipped under reduced motion (every movement is an
-         * instant set; there is nothing to promote for).
+         * ONE predicate, two consumers — "the pan layer is actually moving":
+         * pointer down, inertia throw, or the wheel chase, until everything is
+         * at rest again.
+         *
+         *  · will-change (§7), put on and taken off, never permanent — a
+         *    forever-promoted layer squats on GPU memory for the life of the
+         *    page. Skipped under reduced motion: every movement there is an
+         *    instant set, so there is nothing to promote for.
+         *  · `data-vitrina-gesture` on the root, for the consumer's chrome. NOT
+         *    skipped under reduced motion — the plane still moves, and anything
+         *    painted over it still pays for that. A single attribute write at
+         *    each end of the gesture, never per frame, and deliberately NOT on
+         *    `useVitrina()`: state there would re-render the whole widget twice
+         *    per gesture, which is the cost this exists to avoid.
+         *
+         * The zoom step is deliberately NOT a gesture. It has its own
+         * will-change on the other layer, and the buttons that trigger it ARE
+         * the chrome — dropping their treatment under the pointer that is
+         * clicking them trades a real flicker for 300 ms of saving.
          */
-        let promoted = false;
+        let moving = false;
         const promote = () => {
-          if (reduced || promoted) return;
-          promoted = true;
-          gsap.set(panLayer, { willChange: 'transform' });
+          if (moving) return;
+          moving = true;
+          onGestureRef.current(true);
+          if (!reduced) gsap.set(panLayer, { willChange: 'transform' });
         };
         const demote = () => {
-          if (!promoted) return;
+          if (!moving) return;
           if (drag && (drag.isDragging || drag.isThrowing)) return;
           if (panToX.tween?.isActive() || panToY.tween?.isActive()) return;
-          promoted = false;
-          gsap.set(panLayer, { willChange: 'auto' });
+          moving = false;
+          onGestureRef.current(false);
+          if (!reduced) gsap.set(panLayer, { willChange: 'auto' });
+        };
+        // A teardown mid-gesture (unmount, resize, reduced-motion flip) must not
+        // leave the attribute stamped on a plane that is no longer moving.
+        endGesture = () => {
+          if (!moving) return;
+          moving = false;
+          onGestureRef.current(false);
         };
 
         /*
@@ -791,6 +826,11 @@ export function Plane({
 
     return () => {
       cancelled = true;
+      // The attribute is a plain DOM write on a node this component does not
+      // own, so no context revert takes it back: clear it by hand, first, before
+      // the movers that could still flip it are killed.
+      endGesture?.();
+      endGesture = null;
       // Explicit kills, not just the context: these were created after the await,
       // and a context reverted before they existed cannot know about them.
       drag?.kill();

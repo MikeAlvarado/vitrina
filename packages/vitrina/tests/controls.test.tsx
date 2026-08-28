@@ -9,10 +9,13 @@
  * pops) but keeps drag/wheel/zoom/toggle working; 'grid' locks the view;
  * 'ignore' animates with the preference on. The tab-order pass runs identically
  * in all three — focus is not decoration. And will-change is put on and taken
- * off around the zoom tween, never permanent.
+ * off around the zoom tween, never permanent — as is `data-vitrina-gesture`,
+ * which rides the same predicate and exists for chrome painted over a moving
+ * plane.
  */
 import { act } from 'react';
 import { gsap } from 'gsap';
+import { Draggable } from 'gsap/Draggable';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VitrinaControls } from '../src';
@@ -30,8 +33,17 @@ import {
 import type { DomStubs } from './harness';
 
 let stubs: DomStubs;
+/** The Draggables the plane built — their vars are how a test drives a gesture. */
+let created: Draggable[] = [];
 
 beforeEach(() => {
+  created = [];
+  const realCreate = Draggable.create;
+  vi.spyOn(Draggable, 'create').mockImplementation((targets, vars) => {
+    const instances = realCreate.call(Draggable, targets, vars);
+    created.push(...instances);
+    return instances;
+  });
   stubs = stubDom();
 });
 
@@ -197,6 +209,76 @@ describe('will-change: put on, taken off', () => {
     expect(zoomLayer?.style.willChange).toBe('transform');
     landTimeline();
     expect(zoomLayer?.style.willChange).not.toBe('transform');
+
+    await act(async () => root.unmount());
+  });
+});
+
+/*
+ * `data-vitrina-gesture`: the root says the plane is moving, so chrome painted
+ * over it can drop whatever is expensive to re-composite every frame (a
+ * backdrop-filter, above all). One attribute write at each end of a gesture —
+ * never per frame, never a re-render, and never on the API for that reason.
+ */
+describe('data-vitrina-gesture: the plane says when it is moving', () => {
+  /** The vars the plane handed its Draggable — pressing and releasing for real. */
+  const dragVars = () => {
+    const drag = created[created.length - 1];
+    if (!drag) throw new Error('no Draggable created');
+    return drag.vars as { onPress?: () => void; onRelease?: () => void };
+  };
+  const rootOf = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-vitrina-root]');
+  const moving = (host: HTMLElement) => rootOf(host)?.hasAttribute('data-vitrina-gesture') ?? false;
+
+  it('stamps the root on press and clears it on release, with will-change alongside', async () => {
+    const { host, root } = await mountStrict({ children: <Probe /> });
+    const panLayer = host.querySelector<HTMLElement>('[data-vitrina-pan]');
+    expect(moving(host)).toBe(false);
+
+    act(() => dragVars().onPress?.());
+    expect(moving(host)).toBe(true);
+    expect(panLayer?.style.willChange).toBe('transform');
+
+    act(() => dragVars().onRelease?.());
+    expect(moving(host)).toBe(false);
+    expect(panLayer?.style.willChange).not.toBe('transform');
+
+    await act(async () => root.unmount());
+  });
+
+  it('is stamped under reduced motion too — the plane still moves, only will-change is skipped', async () => {
+    stubs.prefersReduced = true;
+    const { host, root } = await mountStrict({ children: <Probe /> });
+    const panLayer = host.querySelector<HTMLElement>('[data-vitrina-pan]');
+
+    act(() => dragVars().onPress?.());
+    expect(moving(host)).toBe(true);
+    // Nothing to promote for: every movement under reduced motion is an instant set.
+    expect(panLayer?.style.willChange ?? '').not.toBe('transform');
+
+    act(() => dragVars().onRelease?.());
+    expect(moving(host)).toBe(false);
+
+    await act(async () => root.unmount());
+  });
+
+  it('a zoom step is not a gesture: the buttons that trigger it are the chrome', async () => {
+    const { host, root } = await mountStrict({ children: <Probe /> });
+    act(() => currentApi().zoomIn());
+    expect(moving(host)).toBe(false);
+    landTimeline();
+    expect(moving(host)).toBe(false);
+    await act(async () => root.unmount());
+  });
+
+  it('a teardown mid-gesture clears it: no plane left stamped as moving', async () => {
+    const { host, root } = await mountStrict({ children: <Probe /> });
+    act(() => dragVars().onPress?.());
+    expect(moving(host)).toBe(true);
+
+    // The view toggle unmounts the plane with the pointer still down.
+    act(() => currentApi().toggleView());
+    expect(moving(host)).toBe(false);
 
     await act(async () => root.unmount());
   });

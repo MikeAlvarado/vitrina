@@ -344,6 +344,27 @@ a:hover {
   cursor: default;
 }
 
+/*
+ * While the plane is actually moving — dragging, coasting on the inertia throw,
+ * or chasing the wheel — the library stamps `data-vitrina-gesture` on its root.
+ * A backdrop-filter is the single most expensive thing on this page per frame,
+ * and its backdrop is precisely the layer that changes on every one of them: the
+ * compositor re-blurs the region under all three chips for the whole gesture.
+ *
+ * The answer is not "no treatment". The blur is here BECAUSE the plane moves
+ * under it — dropping it exactly then would be backwards. It is a cheaper
+ * treatment that is MORE legible, not less: a solid chip. The button's existing
+ * background transition eases it in; the blur itself snaps, which is what a drag
+ * wants at its first frame.
+ *
+ * Last in the block on purpose: it ties with the hover rule on specificity, and
+ * a chip under a pointer that is dragging the plane is dragging, not hovering.
+ */
+[data-vitrina-root][data-vitrina-gesture] [data-vitrina-controls] button {
+  backdrop-filter: none;
+  background: var(--vitrina-page);
+}
+
 /* --- Sections ------------------------------------------------------------- */
 
 .section {

@@ -359,6 +359,40 @@ behind the buttons and an open detail panel covers them where it overlaps — po
 but don't give it a `z-index` of your own. The container takes no pointer events (only
 the buttons do), so a drag starting in the gap between buttons still pans the plane.
 
+### Chrome over a plane in motion (`data-vitrina-gesture`)
+
+While the plane is actually moving — dragging, coasting on the inertia throw, or
+chasing the wheel — the root carries `data-vitrina-gesture`. It is gone the moment
+everything is at rest.
+
+It exists for one thing: chrome painted over the plane whose cost is paid **per
+frame**. A `backdrop-filter` is the usual offender — its backdrop is exactly the layer
+that changes on every frame of the gesture, so the compositor re-blurs the region under
+your controls for the whole drag. Key off the attribute and hand it something cheaper
+while it matters:
+
+```css
+[data-vitrina-root][data-vitrina-gesture] [data-vitrina-controls] button {
+  backdrop-filter: none;
+  background: var(--vitrina-page); /* solid: cheaper AND more legible */
+}
+```
+
+Two things it deliberately is not:
+
+- **Not on `useVitrina()`.** It flips at both ends of every gesture, and re-rendering
+  the widget there would cost more than the effect it turns off. It is a DOM write, so
+  CSS is where it is read.
+- **Not tied to reduced motion.** A visitor who prefers reduced motion still drags the
+  plane, and chrome over it still pays. (`will-change`, which rides the same predicate
+  internally, *is* skipped there — nothing to promote for when every movement is an
+  instant set.)
+
+A zoom step is not a gesture: it moves the other layer, briefly, and the buttons that
+trigger it are usually the chrome in question — dropping their treatment under the
+pointer that is clicking them trades a visible flicker for 300 ms of saving. The grid
+view never carries it either; it scrolls natively.
+
 ## The grid is a catalogue
 
 The grid view is the plane's list with another layout — one card per **entity**, not
