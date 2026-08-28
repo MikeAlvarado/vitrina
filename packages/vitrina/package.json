@@ -1,6 +1,6 @@
 {
   "name": "vitrina",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "A finite, draggable plane of cut-out objects for React — pan with inertia, discrete zoom, staggered reveal, grid view, detail flight.",
   "license": "MIT",
   "author": "Mike Alvarado",
