@@ -34,7 +34,7 @@
  * no focus and no clicks, and keeps its box for the flight to measure).
  */
 
-import { useMemo, useReducer, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useReducer, useRef, useState } from 'react';
 import { gsap } from 'gsap';
 import type { Draggable } from 'gsap/Draggable';
 import type { Observer } from 'gsap/Observer';
@@ -149,6 +149,92 @@ const show = (targets: Element[]) => {
   gsap.set(targets.map(contentOf), { opacity: 1, scale: 1, lazy: false });
 };
 
+interface PlaneObjectProps {
+  entity: VitrinaEntity;
+  instanceId: string;
+  x: number;
+  y: number;
+  size: number;
+  /** Its copy is elsewhere (in flight, in the panel): keep the box, take the paint. */
+  hidden: boolean;
+  isActive: boolean;
+  isRevealed: boolean;
+  /** `labels.objectLabel` — the function, not the labels object, so a fresh
+      labels literal with a stable labeller still bails out. */
+  objectLabel: VitrinaLabels['objectLabel'];
+  renderObject: VitrinaProps['renderObject'];
+  /** Stable per instance id, created once by the plane. */
+  nodeRef: (el: HTMLButtonElement | null) => void;
+  /** Stable for the life of the plane (ref-backed): a consumer's inline
+      `onActiveChange` must not re-render every object on every render. */
+  onOpen: (entityId: string, instanceId: string) => void;
+}
+
+/*
+ * ONE object, memoised — and the memo is the point, not an incidental
+ * optimisation. Every render of the root recomputes props for all of them (the
+ * default plane is 114), and the whole subtree is the consumer's
+ * `renderObject`: opening a panel, clicking zoom, or a batch of reveal pops
+ * landing mid-drag would otherwise re-run all 114 of them, several times a
+ * second, in the frames the drag most needs.
+ *
+ * Everything here is a primitive or a reference the plane keeps stable, so the
+ * bail-out is real: only the objects whose OWN answer changed re-render — the
+ * one being hidden for a flight, and the copies of the entity the panel is
+ * about. The two identities the plane cannot own are `renderObject` and
+ * `objectLabel`: they are the consumer's, and they SHOULD re-render everything
+ * when they genuinely change (swapping the dataset changes both). A consumer
+ * who re-creates them inline every render pays the old cost — the README says
+ * so, and tests/perf.test.tsx pins the counts so a regression here is loud.
+ */
+const PlaneObject = memo(function PlaneObject({
+  entity,
+  instanceId,
+  x,
+  y,
+  size,
+  hidden,
+  isActive,
+  isRevealed,
+  objectLabel,
+  renderObject,
+  nodeRef,
+  onOpen,
+}: PlaneObjectProps) {
+  return (
+    <button
+      ref={nodeRef}
+      type="button"
+      data-vitrina-object=""
+      data-vitrina-instance={instanceId}
+      data-vitrina-entity={entity.id}
+      // Exact per-instance id for Flip — never a per-entity prefix.
+      data-flip-id={instanceId}
+      aria-label={objectLabel(entity)}
+      // Nothing is tabbable until the pass says so: the server and the
+      // un-measured client agree, and the pass writes tabindex directly —
+      // this prop never changes, so React never fights it.
+      tabIndex={-1}
+      onClick={() => onOpen(entity.id, instanceId)}
+      style={{
+        left: x,
+        top: y,
+        width: size,
+        height: size,
+        // React owns `visibility`; GSAP owns opacity/scale/pointer-events.
+        // Neither ever writes the other's. Everything else is base.css's.
+        visibility: hidden ? 'hidden' : undefined,
+      }}
+    >
+      {/* The content node: what the pop animates (a span — a button holds
+          phrasing content only). The button above is the box. */}
+      <span data-vitrina-object-content="">
+        {renderObject(entity, { instanceId, isActive, isRevealed, view: 'plane' })}
+      </span>
+    </button>
+  );
+});
+
 export function Plane({
   entities,
   instances,
@@ -207,6 +293,14 @@ export function Plane({
   const onNodeRef = useRef(onNode);
   /** Read by the Draggable (created once per geometry) so a prop change needs no rebuild. */
   const onDragStartRef = useRef(onDragStart);
+  /**
+   * Same treatment for the click: the objects are memoised, and `onOpen` reaches
+   * this component through the root's `openDetail`, whose identity ultimately
+   * depends on the consumer's `onActiveChange`. An inline one there would give
+   * every object a new prop on every render and defeat the memo — so the
+   * objects get a wrapper that never changes, and it reads the current handler.
+   */
+  const onOpenRef = useRef(onOpen);
   /** Re-renders once per finished reveal batch so `renderObject` sees `isRevealed` flip. */
   const [, bumpRevealed] = useReducer((n: number) => n + 1, 0);
 
@@ -373,6 +467,14 @@ export function Plane({
   useIsomorphicLayoutEffect(() => {
     onDragStartRef.current = onDragStart;
   }, [onDragStart]);
+  useIsomorphicLayoutEffect(() => {
+    onOpenRef.current = onOpen;
+  }, [onOpen]);
+
+  const handleOpen = useCallback(
+    (entityId: string, instanceId: string) => onOpenRef.current(entityId, instanceId),
+    [],
+  );
 
   const nodeRef = (id: string) => {
     let ref = nodeRefsRef.current.get(id);
@@ -899,46 +1001,28 @@ export function Plane({
       <div ref={zoomLayerRef} data-vitrina-zoom="">
         {/* World-sized: the one structural value only this render knows. */}
         <div ref={panLayerRef} data-vitrina-pan="" style={{ width: world.w, height: world.h }}>
+          {/* The map still runs every render — it is 114 shallow prop
+              comparisons. What it no longer does is re-run the consumer's
+              `renderObject` for objects whose answer did not change. */}
           {placed.map((inst) => {
             const entity = entityById.get(inst.entityId);
             if (!entity) return null;
             return (
-              <button
+              <PlaneObject
                 key={inst.id}
-                ref={nodeRef(inst.id)}
-                type="button"
-                data-vitrina-object=""
-                data-vitrina-instance={inst.id}
-                data-vitrina-entity={inst.entityId}
-                // Exact per-instance id for Flip — never a per-entity prefix.
-                data-flip-id={inst.id}
-                aria-label={labels.objectLabel(entity)}
-                // Nothing is tabbable until the pass says so: the server and the
-                // un-measured client agree, and the pass writes tabindex directly —
-                // this prop never changes, so React never fights it.
-                tabIndex={-1}
-                onClick={() => onOpen(inst.entityId, inst.id)}
-                style={{
-                  left: inst.x,
-                  top: inst.y,
-                  width: inst.size,
-                  height: inst.size,
-                  // React owns `visibility`; GSAP owns opacity/scale/pointer-events.
-                  // Neither ever writes the other's. Everything else is base.css's.
-                  visibility: hiddenIds.has(inst.id) ? 'hidden' : undefined,
-                }}
-              >
-                {/* The content node: what the pop animates (a span — a button
-                    holds phrasing content only). The button above is the box. */}
-                <span data-vitrina-object-content="">
-                  {renderObject(entity, {
-                    instanceId: inst.id,
-                    isActive: inst.entityId === activeEntityId,
-                    isRevealed: shown.has(inst.id),
-                    view: 'plane',
-                  })}
-                </span>
-              </button>
+                entity={entity}
+                instanceId={inst.id}
+                x={inst.x}
+                y={inst.y}
+                size={inst.size}
+                hidden={hiddenIds.has(inst.id)}
+                isActive={inst.entityId === activeEntityId}
+                isRevealed={shown.has(inst.id)}
+                objectLabel={labels.objectLabel}
+                renderObject={renderObject}
+                nodeRef={nodeRef(inst.id)}
+                onOpen={handleOpen}
+              />
             );
           })}
         </div>

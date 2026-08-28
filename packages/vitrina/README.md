@@ -90,6 +90,30 @@ panel's slot, the flying copy. You never size the box; you fill it.
   your content a background and the shadow wraps that rectangle instead of the cut-out;
   leave it transparent.
 
+### Keeping the render props stable
+
+Every object on the plane is memoised. The default plane mounts 114 of them, and the
+library re-runs `renderObject` only for the copies whose own answer changed — the object
+the panel is about, the ones that just popped. A zoom step, a panel opening, or your own
+page re-rendering above `<Vitrina>` reaches none of them.
+
+That bail-out rests on two identities the library cannot own: `renderObject` and
+`labels.objectLabel`. Define them outside your component (or memoise them). Passed
+inline, they are new functions on every render and all 114 objects redraw with your
+page:
+
+```tsx
+// ✗ a new function each render — every object redraws
+<Vitrina renderObject={(entity) => <img src={src(entity)} alt="" />} … />
+
+// ✓ defined once
+const renderObject = (entity) => <img src={src(entity)} alt="" />;
+<Vitrina renderObject={renderObject} … />
+```
+
+Changing them on purpose — swapping in another dataset — redraws everything, which is
+exactly what should happen.
+
 ## Two datasets, the same three lines
 
 The library never looks inside `entity.data`; it hands it back to your render props

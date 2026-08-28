@@ -653,21 +653,26 @@ describe('the API and the consumer', () => {
   });
 
   it('every copy of the active entity reports isActive — plane instances and the panel copy', async () => {
+    /*
+     * Keyed by view+instance and holding the LAST answer that copy was rendered
+     * with — never appended, and never cleared between the phases. The plane's
+     * objects are memoised: a copy whose answer did not change is not
+     * re-rendered and does not report again, and what it is showing is exactly
+     * what was recorded here on the previous render. Asserting on "did it
+     * report during this click" would test the memo, not the contract.
+     */
     const seen = new Map<string, boolean>();
     const renderObject = vi.fn((_: unknown, ctx: VitrinaObjectContext) => {
-      seen.set(`${ctx.view}:${ctx.instanceId}:${ctx.isActive}`, true);
+      seen.set(`${ctx.view}:${ctx.instanceId}`, ctx.isActive);
       return null;
     });
     const { host, root, revealed } = await mountRevealed({ props: { renderObject } });
     const origin = revealed[0] as HTMLButtonElement;
     const entityId = entityOf(origin);
-    seen.clear();
     act(() => origin.click());
     for (const el of objectsOf(host)) {
       const id = el.getAttribute('data-vitrina-instance') ?? '';
-      const active = entityOf(el) === entityId;
-      expect(seen.has(`plane:${id}:${active}`)).toBe(true);
-      expect(seen.has(`plane:${id}:${!active}`)).toBe(false);
+      expect(seen.get(`plane:${id}`)).toBe(entityOf(el) === entityId);
     }
     await act(async () => root.unmount());
   });

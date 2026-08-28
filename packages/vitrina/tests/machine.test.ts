@@ -54,6 +54,11 @@ function assertWellFormed(state: DetailState) {
     expect(state).toEqual(CLOSED);
     expect(activeCopy(state)).toBe('plane');
     expect(hiddenInstancesOf(state).size).toBe(0);
+    // The SAME set object for every state that hides nothing, not merely an
+    // equal one: this is a React prop every object in the view reads, and a
+    // fresh Set here would change identity on every render of the root and
+    // re-render all of them (pinned end to end in tests/perf.test.tsx).
+    expect(hiddenInstancesOf(state)).toBe(hiddenInstancesOf(CLOSED));
     return;
   }
   expect(state.active).not.toBeNull();

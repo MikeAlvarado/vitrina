@@ -970,7 +970,16 @@ export function Vitrina({
   );
 
   const copy = activeCopy(detail);
-  const hiddenIds = hiddenInstancesOf(detail);
+  /*
+   * Memoised on the machine state, not recomputed per render: `hiddenIds` is a
+   * prop every object in the view reads, and the reducer already returns the
+   * SAME state reference for a no-op transition — so a render this component
+   * did for any other reason (a zoom click, the consumer re-rendering above it)
+   * hands the views the identity they already had, and the memoised objects
+   * bail out. The empty answer is shared by the machine itself, so the
+   * overwhelmingly common "no panel" case is stable across states too.
+   */
+  const hiddenIds = useMemo(() => hiddenInstancesOf(detail), [detail]);
   /** Every copy of the active entity is "active" for `renderObject` while the panel is about it. */
   const activeCtxEntityId = detail.panel === 'closed' ? null : (detail.active?.entityId ?? null);
   const relayEntity = detail.relaying ? (entityById.get(detail.relaying.entityId) ?? null) : null;

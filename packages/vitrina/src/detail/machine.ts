@@ -307,13 +307,32 @@ export function activeCopy(state: DetailState): DetailCopy {
 }
 
 /**
+ * Nothing is hidden — by far the commonest answer (every state with no panel).
+ * ONE shared instance, so that the plane's `hiddenIds` prop keeps its identity
+ * across unrelated states and the memoised objects can bail out of the
+ * re-render. Sharing is safe because the return type is ReadonlySet and every
+ * call site only reads: `Object.freeze` would be theatre here, it does not
+ * close a Set's `add`.
+ */
+const NONE_HIDDEN: ReadonlySet<string> = new Set<string>();
+
+/**
  * The instances to hide on the plane: the active one whenever its copy is
  * elsewhere, and the relaying one throughout its flight. At most two, always of
  * different entities.
+ *
+ * ReadonlySet, and the empty answer is that shared constant: this result is a
+ * React prop every object in the view reads, so a fresh Set per call would
+ * change identity on every render of the root and take all of them with it.
  */
-export function hiddenInstancesOf(state: DetailState): Set<string> {
+export function hiddenInstancesOf(state: DetailState): ReadonlySet<string> {
+  const activeId =
+    state.active?.instanceId != null && activeCopy(state) !== 'plane'
+      ? state.active.instanceId
+      : null;
+  if (activeId === null && state.relaying === null) return NONE_HIDDEN;
   const set = new Set<string>();
-  if (state.active?.instanceId != null && activeCopy(state) !== 'plane') set.add(state.active.instanceId);
+  if (activeId !== null) set.add(activeId);
   if (state.relaying !== null) set.add(state.relaying.instanceId);
   return set;
 }
